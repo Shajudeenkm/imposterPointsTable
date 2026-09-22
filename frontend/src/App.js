@@ -11,9 +11,10 @@ import HistoryDashboard from './components/History/HistoryDashboard';
 import GameDetail from './components/History/GameDetail';
 import FavoritesManager from './components/Favorites/FavoritesManager';
 import ProfileSettings from './components/Profile/ProfileSettings';
-import NotFound from './components/NotFound'; // Added NotFound import
+import NotFound from './components/NotFound';
+import LandingPage from './components/LandingPage'; // Imported the new landing page
 
-// Dashboard / Home Component
+// Dashboard / Home Component (Visible only when logged in)
 const Dashboard = () => {
   const { user } = useAuth();
 
@@ -72,6 +73,18 @@ const Dashboard = () => {
   );
 };
 
+// Root Router Logic Component
+const RootRoute = () => {
+  const { user, loading } = useAuth();
+  
+  if (loading) {
+    return <div className="loading-container"><div className="spinner"></div></div>;
+  }
+  
+  // If user is logged in, show Dashboard. If not, show Landing Page with Modal.
+  return user ? <Dashboard /> : <LandingPage />;
+};
+
 function App() {
   return (
     <AuthProvider>
@@ -80,11 +93,14 @@ function App() {
           <Navbar />
           <main className="main-content">
             <Routes>
+              {/* Standalone auth pages (kept as fallback, but users will mostly use the modal) */}
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
-              <Route path="/" element={
-                <PrivateRoute><Dashboard /></PrivateRoute>
-              } />
+              
+              {/* Intelligent Root Route */}
+              <Route path="/" element={<RootRoute />} />
+              
+              {/* Protected Routes */}
               <Route path="/play" element={
                 <PrivateRoute><TeamSetup /></PrivateRoute>
               } />

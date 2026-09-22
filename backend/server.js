@@ -12,16 +12,18 @@ const favoriteRoutes = require('./routes/favorites');
 const app = express();
 
 // Middleware
-app.use(cors());
+// Allows requests from any origin (perfect for free deployment on Vercel)
+app.use(cors({
+  origin: '*', 
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('MongoDB connected successfully'))
-.catch(err => console.error('MongoDB connection error:', err));
+// Connect to MongoDB (Removed deprecated useNewUrlParser/useUnifiedTopology)
+mongoose.connect(process.env.MONGODB_URI)
+.then(() => console.log('✅ MongoDB connected successfully'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -30,7 +32,7 @@ app.use('/api/games', gameRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/favorites', favoriteRoutes);
 
-// Health check
+// Health check (Useful for Render deployment checks)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'Server is running', timestamp: new Date().toISOString() });
 });
@@ -46,5 +48,5 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });

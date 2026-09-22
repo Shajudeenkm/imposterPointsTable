@@ -13,6 +13,9 @@ const Navbar = () => {
   const [pendingPath, setPendingPath] = useState(null);
   const [ending, setEnding] = useState(false);
 
+  // NEW: Logout confirmation modal (always shown on Logout click)
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
   // Detect if user is currently inside an active game
   const isInGame = location.pathname.startsWith('/game/');
   const currentGameId = isInGame ? location.pathname.split('/')[2] : null;
@@ -24,13 +27,11 @@ const Navbar = () => {
 
   // Intercept navigation while in a game
   const handleNavClick = (e, path) => {
-    // Allow free navigation if not in a game, or if going to the same game page
     if (!isInGame || path === location.pathname) {
       setMenuOpen(false);
       return;
     }
 
-    // Block navigation and show the exit modal
     e.preventDefault();
     setPendingPath(path);
     setShowExitModal(true);
@@ -66,29 +67,35 @@ const Navbar = () => {
     setPendingPath(null);
   };
 
-  // Logout also protected during a game
-  const handleLogout = (e) => {
+  // ── LOGOUT FLOW ──────────────────────────────────────────
+  // Always show confirmation first
+  const handleLogoutClick = (e) => {
+    e.preventDefault();
+    setMenuOpen(false);
+
+    // If currently in a game, use the richer exit modal (End / Continue / Logout & Play Later)
     if (isInGame) {
-      e.preventDefault();
       setPendingPath('LOGOUT');
       setShowExitModal(true);
-      setMenuOpen(false);
-    } else {
-      logout();
+      return;
     }
+
+    // Otherwise show simple logout confirmation
+    setShowLogoutConfirm(true);
   };
 
-  const confirmLogout = async () => {
-    // If they chose "End Game" during logout flow
-    if (pendingPath === 'LOGOUT') {
-      setShowExitModal(false);
-      setPendingPath(null);
-      logout();
-      navigate('/login');
-    }
+  // Confirm simple logout (not in game)
+  const confirmLogout = () => {
+    setShowLogoutConfirm(false);
+    logout();
+    navigate('/');
   };
 
-  // Special handler when modal is opened via Logout
+  const cancelLogout = () => {
+    setShowLogoutConfirm(false);
+  };
+
+  // End game then logout (from in-game exit modal)
   const handleEndAndLogout = async () => {
     if (currentGameId) {
       setEnding(true);
@@ -102,14 +109,15 @@ const Navbar = () => {
     setShowExitModal(false);
     setPendingPath(null);
     logout();
-    navigate('/login');
+    navigate('/');
   };
 
+  // Logout without ending game (Play Later)
   const handlePlayLaterLogout = () => {
     setShowExitModal(false);
     setPendingPath(null);
     logout();
-    navigate('/login');
+    navigate('/');
   };
 
   const isLogoutFlow = pendingPath === 'LOGOUT';
@@ -160,7 +168,7 @@ const Navbar = () => {
                 <span className="nav-avatar">{user?.username?.charAt(0)?.toUpperCase()}</span>
                 {user?.username}
               </Link>
-              <button onClick={handleLogout} className="nav-btn-logout">
+              <button onClick={handleLogoutClick} className="nav-btn-logout">
                 Logout
               </button>
             </>
@@ -177,7 +185,7 @@ const Navbar = () => {
         </div>
       </nav>
 
-      {/* ── Exit Game Modal ── */}
+      {/* ── Exit Game Modal (nav away / logout while in game) ── */}
       {showExitModal && (
         <div className="modal-overlay" onClick={handleContinue}>
           <div className="modal-content exit-modal" onClick={(e) => e.stopPropagation()}>
@@ -190,7 +198,6 @@ const Navbar = () => {
             </p>
 
             <div className="exit-modal-actions">
-              {/* End Game */}
               <button
                 className="btn btn-danger btn-block"
                 onClick={isLogoutFlow ? handleEndAndLogout : handleEndGame}
@@ -199,7 +206,6 @@ const Navbar = () => {
                 {ending ? 'Ending...' : '🏁 End Game'}
               </button>
 
-              {/* Continue Playing */}
               <button
                 className="btn btn-primary btn-block"
                 onClick={handleContinue}
@@ -208,13 +214,44 @@ const Navbar = () => {
                 🎮 Continue Playing
               </button>
 
-              {/* Play Later / Leave without ending */}
               <button
                 className="btn btn-secondary btn-block"
                 onClick={isLogoutFlow ? handlePlayLaterLogout : handlePlayLater}
                 disabled={ending}
               >
                 ⏸️ {isLogoutFlow ? 'Logout & Play Later' : 'Play Later'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NEW: Logout Confirmation Modal (when NOT in a game) ── */}
+      {showLogoutConfirm && (
+        <div className="modal-overlay" onClick={cancelLogout}>
+          <div
+            className="modal-content exit-modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '400px', textAlign: 'center' }}
+          >
+            <div className="exit-modal-icon">🚪</div>
+            <h2>Log out?</h2>
+            <p className="exit-modal-desc">
+              Are you sure you want to log out of your account?
+            </p>
+
+            <div className="exit-modal-actions" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <button
+                className="btn btn-danger btn-block"
+                onClick={confirmLogout}
+              >
+                🚪 Yes, Log Out
+              </button>
+              <button
+                className="btn btn-secondary btn-block"
+                onClick={cancelLogout}
+              >
+                Cancel
               </button>
             </div>
           </div>
