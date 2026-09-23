@@ -15,7 +15,7 @@ const teamScoreSchema = new mongoose.Schema({
   wasImposter: { type: Boolean, default: false },
   wasIdentified: { type: Boolean, default: false },
   identifiedImposter: { type: Boolean, default: false },
-  votedFor: { type: String, default: '' }  // Name of who they voted for
+  votedFor: { type: String, default: '' }
 }, { _id: false });
 
 const roundSchema = new mongoose.Schema({
@@ -26,8 +26,8 @@ const roundSchema = new mongoose.Schema({
   scores: [teamScoreSchema],
   imposterIdentified: { type: Boolean, default: false },
   identifiedByIds: [{ type: String }],
-  identifiedByNames: [{ type: String }],   // Names of correct guessers
-  fooledByNames: [{ type: String }],       // Names of wrong guessers
+  identifiedByNames: [{ type: String }],
+  fooledByNames: [{ type: String }],
   correctCount: { type: Number, default: 0 },
   missCount: { type: Number, default: 0 },
   completedAt: { type: Date, default: Date.now }
@@ -43,7 +43,8 @@ const gameSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true // Speeds up user queries
   },
   gameName: {
     type: String,
@@ -56,7 +57,8 @@ const gameSchema = new mongoose.Schema({
   numberOfPlayers: {
     type: Number,
     required: true,
-    min: 3
+    min: 3,
+    max: 100 // Sanity cap for memory safety
   },
   floorLimitEnabled: { type: Boolean, default: false },
   floorLimitValue: { type: Number, default: 0 },
@@ -68,6 +70,14 @@ const gameSchema = new mongoose.Schema({
   currentRound: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
   completedAt: { type: Date }
+});
+
+// Door 12: Transform output to never send the __v property
+gameSchema.set('toJSON', {
+  transform: (doc, ret) => {
+    delete ret.__v;
+    return ret;
+  }
 });
 
 gameSchema.index({ userId: 1, createdAt: -1 });

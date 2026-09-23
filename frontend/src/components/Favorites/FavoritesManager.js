@@ -2,6 +2,44 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { favoritesAPI } from '../../services/api';
 
+const FavoritesSkeleton = () => (
+  <div aria-busy="true" aria-label="Loading favorites">
+    <div className="page-header">
+      <div className="skeleton skeleton-title" />
+      <div className="skeleton skeleton-text skeleton-text-md" />
+    </div>
+
+    <div className="history-filters skeleton-filters">
+      {[0, 1, 2, 3].map((i) => (
+        <div className="skeleton skeleton-pill" key={i} />
+      ))}
+    </div>
+
+    <div className="favorites-container">
+      {[0, 1].map((section) => (
+        <div className="category-section skeleton-category" key={section}>
+          <div className="category-header">
+            <div className="skeleton skeleton-heading" />
+          </div>
+          {[0, 1, 2].map((i) => (
+            <div className="favorite-item skeleton-favorite-item" key={i}>
+              <div className="favorite-info" style={{ flex: 1 }}>
+                <div className="skeleton skeleton-text skeleton-text-lg" />
+                <div className="skeleton skeleton-text skeleton-text-md" />
+                <div className="skeleton skeleton-text skeleton-text-sm" />
+              </div>
+              <div className="favorite-actions skeleton-fav-actions">
+                <div className="skeleton skeleton-btn" />
+                <div className="skeleton skeleton-btn-icon" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 const FavoritesManager = () => {
   const navigate = useNavigate();
   const [favorites, setFavorites] = useState([]);
@@ -59,11 +97,14 @@ const FavoritesManager = () => {
     const teamsData = fav.gameId?.teams || [];
 
     const playerNames = teamsData
-      .map(t => t.name || t.teamName || '')
-      .filter(name => name.trim() !== '');
+      .map((t) => t.name || t.teamName || '')
+      .filter((name) => name.trim() !== '');
 
     if (playerNames.length < 3) {
-      setMessage({ type: 'error', text: 'This game does not have enough player data to rematch.' });
+      setMessage({
+        type: 'error',
+        text: 'This game does not have enough player data to rematch.'
+      });
       return;
     }
 
@@ -71,7 +112,6 @@ const FavoritesManager = () => {
       ? `${fav.gameId.gameName} (Rematch)`
       : `Rematch ${new Date().toLocaleDateString()}`;
 
-    // FIXED: navigate to /play (TeamSetup route), NOT /teams
     navigate('/play', {
       state: {
         prefillPlayerNames: playerNames,
@@ -82,12 +122,7 @@ const FavoritesManager = () => {
   };
 
   if (loading) {
-    return (
-      <div className="loading-container">
-        <div className="spinner"></div>
-        <p>Loading favorites...</p>
-      </div>
-    );
+    return <FavoritesSkeleton />;
   }
 
   return (
@@ -105,13 +140,15 @@ const FavoritesManager = () => {
 
       <div className="history-filters">
         <button
+          type="button"
           className={`filter-btn ${selectedCategory === 'all' ? 'active' : ''}`}
           onClick={() => setSelectedCategory('all')}
         >
           All ({favorites.length})
         </button>
-        {categories.map(cat => (
+        {categories.map((cat) => (
           <button
+            type="button"
             key={cat.name}
             className={`filter-btn ${selectedCategory === cat.name ? 'active' : ''}`}
             onClick={() => setSelectedCategory(cat.name)}
@@ -126,7 +163,9 @@ const FavoritesManager = () => {
           <div className="empty-icon">⭐</div>
           <h3>No favorites yet</h3>
           <p>Save your best games from the history page!</p>
-          <Link to="/history" className="btn btn-primary mt-2">Browse History</Link>
+          <Link to="/history" className="btn btn-primary mt-2">
+            Browse History
+          </Link>
         </div>
       ) : (
         <div className="favorites-container">
@@ -139,61 +178,38 @@ const FavoritesManager = () => {
                 </span>
               </div>
 
-              {items.map(fav => (
-                <div
-                  className="favorite-item"
-                  key={fav._id}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '10px'
-                  }}
-                >
+              {items.map((fav) => (
+                <div className="favorite-item" key={fav._id}>
                   <div className="favorite-info">
                     <Link
                       to={`/history/game/${fav.gameId?._id || fav.gameId}`}
-                      style={{
-                        fontWeight: 600,
-                        color: 'var(--text-primary)',
-                        textDecoration: 'none',
-                        fontSize: '1.1rem'
-                      }}
+                      className="favorite-title-link"
                     >
                       {fav.gameId?.gameName || 'Game'}
                     </Link>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                      {fav.gameId?.numberOfPlayers} players · {fav.gameId?.currentRound} rounds ·
-                      {' '}{new Date(fav.savedAt).toLocaleDateString()}
+                    <div className="favorite-meta">
+                      {fav.gameId?.numberOfPlayers} players · {fav.gameId?.currentRound} rounds
+                      · {new Date(fav.savedAt).toLocaleDateString()}
                     </div>
                     {fav.notes && (
-                      <div className="favorite-notes" style={{ marginTop: '0.5rem', fontStyle: 'italic', fontSize: '0.9rem' }}>
-                        "{fav.notes}"
-                      </div>
+                      <div className="favorite-notes">&quot;{fav.notes}&quot;</div>
                     )}
                   </div>
 
-                  <div className="favorite-actions" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <div className="favorite-actions">
                     <button
+                      type="button"
                       className="btn btn-primary btn-sm"
                       onClick={() => setPlayModalFav(fav)}
                       title="Play Options"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.4rem',
-                        padding: '0.4rem 0.8rem',
-                        fontWeight: 'bold'
-                      }}
                     >
                       🎮 Play
                     </button>
                     <button
+                      type="button"
                       className="btn btn-danger btn-sm"
                       onClick={() => handleRemove(fav._id)}
                       title="Remove from favorites"
-                      style={{ padding: '0.4rem 0.8rem', fontWeight: 'bold' }}
                     >
                       ✕
                     </button>
@@ -206,82 +222,42 @@ const FavoritesManager = () => {
       )}
 
       {playModalFav && (
-        <div
-          className="modal-overlay"
-          onClick={() => setPlayModalFav(null)}
-          style={{
-            zIndex: 1000,
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center'
-          }}
-        >
+        <div className="modal-overlay" onClick={() => setPlayModalFav(null)}>
           <div
-            className="modal-content"
+            className="modal-content exit-modal"
             onClick={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              padding: '2rem',
-              borderRadius: '12px',
-              maxWidth: '420px',
-              width: '90%',
-              textAlign: 'center',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.3)'
-            }}
+            style={{ maxWidth: '420px' }}
           >
-            <h3 style={{ marginTop: 0, color: 'var(--text-primary)', fontSize: '1.5rem', marginBottom: '0.5rem' }}>
-              🎮 Play Options
-            </h3>
-            <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+            <div className="exit-modal-icon">🎮</div>
+            <h2>Play Options</h2>
+            <p className="exit-modal-desc">
               Selected Game:{' '}
               <strong style={{ color: 'var(--text-primary)' }}>
                 {playModalFav.gameId?.gameName || 'Unnamed Game'}
               </strong>
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div className="exit-modal-actions">
               <button
-                className="btn btn-success"
+                type="button"
+                className="btn btn-success btn-block"
                 onClick={() => handleResumePlay(playModalFav.gameId?._id)}
-                style={{
-                  padding: '0.85rem',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
               >
                 ▶️ Resume / Continue Playing
               </button>
 
               <button
-                className="btn btn-primary"
+                type="button"
+                className="btn btn-primary btn-block"
                 onClick={() => handleNewGameSameTeams(playModalFav)}
-                style={{
-                  padding: '0.85rem',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}
               >
                 🔄 Start New Game (Same Players)
               </button>
 
               <button
-                className="btn btn-secondary"
+                type="button"
+                className="btn btn-secondary btn-block"
                 onClick={() => setPlayModalFav(null)}
-                style={{ padding: '0.85rem', fontSize: '1rem', marginTop: '0.5rem' }}
               >
                 Cancel
               </button>

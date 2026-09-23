@@ -1,73 +1,92 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { teamsAPI, gamesAPI, favoritesAPI } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 import TeamCard from './TeamCard';
+import {
+  getGuestCategories,
+  generateGuestTeams,
+  createGuestGame,
+  saveGuestGame
+} from '../../utils/guestGame';
 
 const TeamSetup = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isAuthenticated, isGuest } = useAuth();
 
-  // Check if we're coming from favorites rematch
-  const prefillData = location.state || {};
+  // Combine standard (Favorites) and fallback (History) state passing logic
+  const pNames = location.state?.prefillPlayerNames || location.state?.teamNames || [];
+  const pCat = location.state?.prefillCategory || location.state?.category || 'malayalam';
+  const pGame = location.state?.prefillGameName || location.state?.gameName || '';
 
-  const [numberOfTeams, setNumberOfTeams] = useState(
-    prefillData.prefillPlayerNames?.length || 3
-  );
-  const [category, setCategory] = useState(prefillData.prefillCategory || 'malayalam');
+  const [numberOfTeams, setNumberOfTeams] = useState(pNames.length || 3);
+  const [category, setCategory] = useState(pCat);
   const [categories, setCategories] = useState([]);
   const [teams, setTeams] = useState([]);
-  const [gameName, setGameName] = useState(prefillData.prefillGameName || '');
+  const [gameName, setGameName] = useState(pGame);
+  
   const [floorLimitEnabled, setFloorLimitEnabled] = useState(true);
   const [floorLimitValue, setFloorLimitValue] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeTeamId, setActiveTeamId] = useState(null);
 
-  // NEW: Favorite games picker modal
   const [showFavoriteGames, setShowFavoriteGames] = useState(false);
   const [favoriteGames, setFavoriteGames] = useState([]);
   const [loadingFavorites, setLoadingFavorites] = useState(false);
 
-  // Auto-fill teams from prefill data (when coming from Favorites rematch or picking game)
   const prefillTeamsFromNames = useCallback((playerNames, catId = 'custom') => {
     const built = playerNames.map((name, idx) => ({
       teamId: `team_${Date.now()}_${idx}`,
-      name: name,
+      name,
       category: catId,
-      score: 0
+      totalScore: 0
     }));
     setTeams(built);
   }, []);
 
+  // Run on mount to fetch categories and suggestions
   useEffect(() => {
+    const loadCategories = async () => {
+      if (isGuest || !isAuthenticated) {
+        setCategories(getGuestCategories());
+        return;
+      }
+      try {
+        const response = await teamsAPI.getCategories();
+        setCategories(response.data.categories);
+      } catch (err) {
+        setCategories(getGuestCategories());
+      }
+    };
+
+    const loadSuggestions = async () => {
+      try {
+        const response = await teamsAPI.getSuggestions();
+        setSuggestions(response.data.suggestions || []);
+      } catch (err) {
+        console.error('Failed to load suggestions:', err);
+      }
+    };
+
     loadCategories();
-    loadSuggestions();
-
-    // If we have prefill data from Favorites, auto-fill immediately
-    if (prefillData.prefillPlayerNames && prefillData.prefillPlayerNames.length > 0) {
-      prefillTeamsFromNames(prefillData.prefillPlayerNames, prefillData.prefillCategory || 'malayalam');
+    if (isAuthenticated) {
+      loadSuggestions();
     }
-  }, []);
+  }, [isAuthenticated, isGuest]); 
 
-  const loadCategories = async () => {
-    try {
-      const response = await teamsAPI.getCategories();
-      setCategories(response.data.categories);
-    } catch (err) {
-      console.error('Failed to load categories:', err);
+  // Run once if location state holds prefill data (History or Favorites rematch)
+  useEffect(() => {
+    if (pNames.length > 0) {
+      prefillTeamsFromNames(pNames, pCat);
+      setNumberOfTeams(pNames.length);
+      if (pGame) setGameName(pGame);
     }
-  };
-
-  const loadSuggestions = async () => {
-    try {
-      const response = await teamsAPI.getSuggestions();
-      setSuggestions(response.data.suggestions || []);
-    } catch (err) {
-      console.error('Failed to load suggestions:', err);
-    }
-  };
+  }, [pNames, pCat, pGame, prefillTeamsFromNames]);
 
   const loadFavoriteGames = async () => {
     try {
@@ -75,7 +94,6 @@ const TeamSetup = () => {
       const response = await favoritesAPI.getAll({});
       setFavoriteGames(response.data.favorites || []);
     } catch (err) {
-      console.error('Failed to load favorite games:', err);
       setError('Could not load favorite games.');
     } finally {
       setLoadingFavorites(false);
@@ -90,8 +108,8 @@ const TeamSetup = () => {
   const handlePickFavoriteGame = (fav) => {
     const teamsData = fav.gameId?.teams || [];
     const playerNames = teamsData
-      .map(t => t.name || t.teamName || '')
-      .filter(name => name.trim() !== '');
+      .map((t) => t.name || t.teamName || '')
+      .filter((name) => name.trim() !== '');
 
     if (playerNames.length < 3) {
       setError('This favorite game does not have enough player data.');
@@ -99,7 +117,6 @@ const TeamSetup = () => {
       return;
     }
 
-    // Auto-fill teams with the favorite game's players
     prefillTeamsFromNames(playerNames, fav.gameId?.category || 'malayalam');
     setNumberOfTeams(playerNames.length);
     if (!gameName.trim()) {
@@ -113,6 +130,13 @@ const TeamSetup = () => {
     try {
       setLoading(true);
       setError('');
+
+      if (isGuest || !isAuthenticated) {
+        const localTeams = generateGuestTeams(numberOfTeams, category);
+        setTeams(localTeams);
+        return;
+      }
+
       const response = await teamsAPI.generate({ numberOfTeams, category });
       setTeams(response.data.teams);
     } catch (err) {
@@ -123,9 +147,9 @@ const TeamSetup = () => {
   };
 
   const handleNameChange = (teamId, newName) => {
-    setTeams(teams.map(t =>
-      t.teamId === teamId ? { ...t, name: newName } : t
-    ));
+    setTeams((prev) =>
+      prev.map((t) => (t.teamId === teamId ? { ...t, name: newName } : t))
+    );
   };
 
   const handlePickSuggestion = (name) => {
@@ -147,13 +171,12 @@ const TeamSetup = () => {
       return;
     }
 
-    const emptyTeam = teams.find(t => !t.name.trim());
+    const emptyTeam = teams.find((t) => !t.name.trim());
     if (emptyTeam) {
       setError('All teams must have names.');
       return;
     }
 
-    // Duplicate check
     const nameSet = new Set();
     for (const t of teams) {
       const key = t.name.trim().toLowerCase();
@@ -166,8 +189,25 @@ const TeamSetup = () => {
 
     try {
       setLoading(true);
+      setError('');
+
+      if (isGuest || !isAuthenticated) {
+        const guestGame = createGuestGame({
+          teams: teams.map((t) => ({ teamId: t.teamId, name: t.name.trim() })),
+          gameName: gameName || `Game ${new Date().toLocaleDateString()}`,
+          floorLimitEnabled,
+          floorLimitValue
+        });
+        saveGuestGame(guestGame);
+        navigate('/game/guest');
+        return;
+      }
+
       const response = await gamesAPI.create({
-        teams,
+        teams: teams.map((t) => ({
+          teamId: t.teamId,
+          name: t.name.trim()
+        })),
         gameName: gameName || `Game ${new Date().toLocaleDateString()}`,
         floorLimitEnabled,
         floorLimitValue
@@ -180,23 +220,35 @@ const TeamSetup = () => {
     }
   };
 
-  // Filter out suggestions already used
-  const usedNames = new Set(teams.map(t => t.name.trim().toLowerCase()));
-  const filteredSuggestions = suggestions.filter(s => !usedNames.has(s.name.toLowerCase()));
+  const usedNames = new Set(teams.map((t) => t.name.trim().toLowerCase()));
+  const filteredSuggestions = suggestions.filter(
+    (s) => !usedNames.has(s.name.toLowerCase())
+  );
 
   return (
     <div>
       <div className="page-header">
         <h1>🎯 Set Up New Game</h1>
-        <p>Configure your teams and game settings before starting</p>
+        <p>
+          {isGuest
+            ? 'Guest mode — scores stay on this device until you save to cloud'
+            : 'Configure your teams and game settings before starting'}
+        </p>
       </div>
+
+      {isGuest && (
+        <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          👤 Playing as <strong>Guest</strong>. At the end you can save this game
+          to your account (login/signup) or discard it.
+        </div>
+      )}
 
       {error && <div className="alert alert-error">⚠️ {error}</div>}
 
-      {/* Show prefill notice if coming from favorites */}
-      {prefillData.prefillPlayerNames && teams.length > 0 && (
+      {pNames.length > 0 && teams.length > 0 && (
         <div className="alert alert-success" style={{ marginBottom: '1rem' }}>
-          ✅ Auto-filled {teams.length} players from favorite game. You can edit names, add more players, or start the game directly!
+          ✅ Auto-filled {teams.length} players from previous game. You can edit
+          names, add more players, or start the game directly!
         </div>
       )}
 
@@ -226,7 +278,7 @@ const TeamSetup = () => {
               min="3"
               max="20"
               value={numberOfTeams}
-              onChange={(e) => setNumberOfTeams(parseInt(e.target.value) || 3)}
+              onChange={(e) => setNumberOfTeams(parseInt(e.target.value, 10) || 3)}
             />
           </div>
 
@@ -237,9 +289,9 @@ const TeamSetup = () => {
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             >
-              {categories.map(cat => (
+              {categories.map((cat) => (
                 <option key={cat.id} value={cat.id}>
-                  {cat.name} ({cat.sampleNames.join(', ')}...)
+                  {cat.name} ({(cat.sampleNames || []).join(', ')}...)
                 </option>
               ))}
             </select>
@@ -251,17 +303,20 @@ const TeamSetup = () => {
             className="btn btn-primary"
             onClick={generateTeams}
             disabled={loading}
+            type="button"
           >
             {loading ? 'Generating...' : '🎲 Generate Teams'}
           </button>
 
-          <button
-            className="btn btn-secondary"
-            onClick={openFavoriteGamesPicker}
-            type="button"
-          >
-            ⭐ Pick from Favorite Game
-          </button>
+          {isAuthenticated && (
+            <button
+              className="btn btn-secondary"
+              onClick={openFavoriteGamesPicker}
+              type="button"
+            >
+              ⭐ Pick from Favorite Game
+            </button>
+          )}
         </div>
       </div>
 
@@ -270,14 +325,20 @@ const TeamSetup = () => {
           <div className="card mb-3">
             <div className="card-header">
               <h2>Teams ({teams.length})</h2>
-              <button className="btn btn-secondary btn-sm" onClick={generateTeams}>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={generateTeams}
+                type="button"
+              >
                 🔄 Regenerate
               </button>
             </div>
 
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              💡 Click 👥 next to a name to pick from your saved players
-            </p>
+            {isAuthenticated && suggestions.length > 0 && (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                💡 Type to see recent suggestions, or click 👥 to view all saved players.
+              </p>
+            )}
 
             <div className="team-setup-grid">
               {teams.map((team, index) => (
@@ -286,8 +347,9 @@ const TeamSetup = () => {
                     team={team}
                     index={index}
                     onNameChange={handleNameChange}
+                    suggestions={isAuthenticated ? filteredSuggestions : []}
                   />
-                  {suggestions.length > 0 && (
+                  {isAuthenticated && suggestions.length > 0 && (
                     <button
                       type="button"
                       className="pick-suggestion-btn"
@@ -308,15 +370,33 @@ const TeamSetup = () => {
             </div>
 
             <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  cursor: 'pointer'
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={floorLimitEnabled}
                   onChange={(e) => setFloorLimitEnabled(e.target.checked)}
-                  style={{ width: '18px', height: '18px', accentColor: 'var(--accent-primary)' }}
+                  style={{
+                    width: '18px',
+                    height: '18px',
+                    accentColor: 'var(--accent-primary)'
+                  }}
                 />
-                <span style={{ textTransform: 'none', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                  Enable Score Floor Limit (prevent scores from going below a minimum)
+                <span
+                  style={{
+                    textTransform: 'none',
+                    fontSize: '0.95rem',
+                    color: 'var(--text-primary)'
+                  }}
+                >
+                  Enable Score Floor Limit (prevent scores from going below a
+                  minimum)
                 </span>
               </label>
             </div>
@@ -328,7 +408,9 @@ const TeamSetup = () => {
                   type="number"
                   className="form-control"
                   value={floorLimitValue}
-                  onChange={(e) => setFloorLimitValue(parseInt(e.target.value) || 0)}
+                  onChange={(e) =>
+                    setFloorLimitValue(parseInt(e.target.value, 10) || 0)
+                  }
                   style={{ maxWidth: '200px' }}
                 />
               </div>
@@ -340,13 +422,14 @@ const TeamSetup = () => {
             onClick={handleStartGame}
             disabled={loading}
             style={{ marginTop: '1rem' }}
+            type="button"
           >
             {loading ? 'Creating game...' : '🚀 Start Game'}
           </button>
         </>
       )}
 
-      {/* Suggestions Modal (single player pick) */}
+      {/* Manual Full Suggestions Modal */}
       {showSuggestions && (
         <div className="modal-overlay" onClick={() => setShowSuggestions(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -355,6 +438,7 @@ const TeamSetup = () => {
               <button
                 className="btn btn-sm btn-secondary"
                 onClick={() => setShowSuggestions(false)}
+                type="button"
               >
                 ✕
               </button>
@@ -366,9 +450,10 @@ const TeamSetup = () => {
               </div>
             ) : (
               <div className="suggestions-list">
-                {filteredSuggestions.map(s => (
+                {filteredSuggestions.map((s) => (
                   <button
                     key={s.name}
+                    type="button"
                     className="suggestion-item"
                     onClick={() => handlePickSuggestion(s.name)}
                   >
@@ -387,15 +472,20 @@ const TeamSetup = () => {
         </div>
       )}
 
-      {/* NEW: Favorite Games Picker Modal */}
+      {/* Favorite Game Picker Modal */}
       {showFavoriteGames && (
         <div className="modal-overlay" onClick={() => setShowFavoriteGames(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '600px' }}
+          >
             <div className="flex-between mb-2">
               <h2>⭐ Pick from Favorite Game</h2>
               <button
                 className="btn btn-sm btn-secondary"
                 onClick={() => setShowFavoriteGames(false)}
+                type="button"
               >
                 ✕
               </button>
@@ -414,20 +504,29 @@ const TeamSetup = () => {
               <div className="empty-state">
                 <div className="empty-icon">⭐</div>
                 <p>No favorite games yet.</p>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Save games from history to see them here.</p>
               </div>
             ) : (
-              <div className="favorite-games-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '400px', overflowY: 'auto' }}>
-                {favoriteGames.map(fav => {
+              <div
+                className="favorite-games-list"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.75rem',
+                  maxHeight: '400px',
+                  overflowY: 'auto'
+                }}
+              >
+                {favoriteGames.map((fav) => {
                   const teamsData = fav.gameId?.teams || [];
                   const playerNames = teamsData
-                    .map(t => t.name || t.teamName || '')
-                    .filter(n => n.trim());
+                    .map((t) => t.name || t.teamName || '')
+                    .filter((n) => n.trim());
                   const hasEnough = playerNames.length >= 3;
 
                   return (
                     <button
                       key={fav._id}
+                      type="button"
                       className="suggestion-item"
                       onClick={() => hasEnough && handlePickFavoriteGame(fav)}
                       disabled={!hasEnough}
@@ -441,20 +540,23 @@ const TeamSetup = () => {
                         cursor: hasEnough ? 'pointer' : 'not-allowed'
                       }}
                     >
-                      <div style={{ fontWeight: 'bold', fontSize: '1rem', marginBottom: '0.35rem', color: 'var(--text-primary)' }}>
+                      <div
+                        style={{
+                          fontWeight: 'bold',
+                          fontSize: '1rem',
+                          marginBottom: '0.35rem',
+                          color: 'var(--text-primary)'
+                        }}
+                      >
                         {fav.gameId?.gameName || 'Unnamed Game'}
                       </div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
                         📁 {fav.category || 'Uncategorized'} · {playerNames.length} players · {fav.gameId?.currentRound || 0} rounds
                       </div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                        Players: {playerNames.slice(0, 5).join(', ')}{playerNames.length > 5 ? `, +${playerNames.length - 5} more` : ''}
+                        Players: {playerNames.slice(0, 5).join(', ')}
+                        {playerNames.length > 5 ? `, +${playerNames.length - 5} more` : ''}
                       </div>
-                      {!hasEnough && (
-                        <div style={{ fontSize: '0.75rem', color: 'var(--danger)', marginTop: '0.35rem' }}>
-                          ⚠️ Not enough player data
-                        </div>
-                      )}
                     </button>
                   );
                 })}

@@ -1,66 +1,84 @@
 import React from 'react';
 
-const RoleDesignation = ({ teams, selectedImposters, onToggleImposter, maxImposters, imposterCount, onCountChange }) => {
+const RoleDesignation = ({
+  teams,
+  selectedImposters,
+  onToggleImposter,
+  maxImposters,
+  imposterCount,
+  onCountChange
+}) => {
   const totalPlayers = teams.length;
-  const maxAllowed = Math.max(1, totalPlayers - 2); // minimum 2 innocents required
+  const maxAllowed = Math.max(1, Math.min(maxImposters || totalPlayers - 2, totalPlayers - 2));
   const countOptions = Array.from({ length: maxAllowed }, (_, i) => i + 1);
-
-  // If only 3 players, imposter count is locked at 1
   const isLocked = totalPlayers <= 3;
 
   return (
-    <div className="card">
+    <div className="card role-designation">
       <div className="card-header">
         <h3>🎭 Select Imposter(s)</h3>
       </div>
 
-      {/* Imposter Count Selector */}
       <div className="form-group">
-        <label>
-          Number of Imposters {isLocked && '(locked for 3 players)'}
+        <label className="role-count-label">
+          Number of Imposters
+          {isLocked && (
+            <span className="role-lock-hint"> · locked for 3 players</span>
+          )}
         </label>
-        <div className="count-selector">
-          {countOptions.map(n => (
-            <button
-              key={n}
-              type="button"
-              className={`count-btn ${imposterCount === n ? 'active' : ''} ${isLocked && n !== 1 ? 'disabled' : ''}`}
-              onClick={() => !isLocked && onCountChange(n)}
-              disabled={isLocked && n !== 1}
-            >
-              {n}
-            </button>
-          ))}
+        <div className="count-selector" role="group" aria-label="Imposter count">
+          {countOptions.map((n) => {
+            const disabled = isLocked && n !== 1;
+            return (
+              <button
+                key={n}
+                type="button"
+                className={`count-btn ${imposterCount === n ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+                onClick={() => !disabled && onCountChange(n)}
+                disabled={disabled}
+                aria-pressed={imposterCount === n}
+              >
+                {n}
+              </button>
+            );
+          })}
         </div>
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-          ℹ️ Minimum 2 innocents required. Max imposters allowed: {maxAllowed}
+        <p className="role-hint">
+          ℹ️ Min 2 innocents required · Max imposters: {maxAllowed}
         </p>
       </div>
 
-      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-        Select {imposterCount} team{imposterCount > 1 ? 's' : ''} to be the imposter{imposterCount > 1 ? 's' : ''}
+      <p className="role-instruction">
+        Select {imposterCount} team{imposterCount > 1 ? 's' : ''} to be the
+        imposter{imposterCount > 1 ? 's' : ''}
       </p>
 
       <div className="role-selection-grid">
-        {teams.map(team => {
+        {teams.map((team) => {
           const isSelected = selectedImposters.includes(team.teamId);
           const isDisabled = !isSelected && selectedImposters.length >= imposterCount;
 
           return (
-            <div
+            <button
               key={team.teamId}
+              type="button"
               className={`role-option ${isSelected ? 'selected' : ''} ${isDisabled ? 'disabled' : ''}`}
               onClick={() => !isDisabled && onToggleImposter(team.teamId)}
+              disabled={isDisabled}
+              aria-pressed={isSelected}
             >
-              {isSelected && '🎭 '}
-              {team.name}
-            </div>
+              <span className="role-option-icon">{isSelected ? '🎭' : '👤'}</span>
+              <span className="role-option-name">{team.name}</span>
+            </button>
           );
         })}
       </div>
 
-      <div style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-        Selected: <strong style={{ color: 'var(--accent-primary)' }}>{selectedImposters.length} / {imposterCount}</strong>
+      <div className="role-selected-count">
+        Selected:{' '}
+        <strong>
+          {selectedImposters.length} / {imposterCount}
+        </strong>
       </div>
     </div>
   );

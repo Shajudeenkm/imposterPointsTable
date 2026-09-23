@@ -21,7 +21,8 @@ const userSchema = new mongoose.Schema({
   password: {
     type: String,
     required: [true, 'Password is required'],
-    minlength: [6, 'Password must be at least 6 characters']
+    minlength: [6, 'Password must be at least 6 characters'],
+    select: false // Door 12: never returned unless explicitly +password
   },
   profilePrivacy: {
     type: String,
@@ -43,9 +44,9 @@ const userSchema = new mongoose.Schema({
 });
 
 // Hash password before saving
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
-  
+
   try {
     const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
@@ -55,16 +56,22 @@ userSchema.pre('save', async function(next) {
   }
 });
 
-// Compare password method
-userSchema.methods.comparePassword = async function(candidatePassword) {
+// Compare password — caller must have selected +password
+userSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Remove password from JSON output
-userSchema.methods.toJSON = function() {
-  const userObject = this.toObject();
-  delete userObject.password;
-  return userObject;
+// Door 12: API returns only safe fields the UI needs
+userSchema.methods.toJSON = function () {
+  return {
+    id: this._id,
+    username: this.username,
+    email: this.email,
+    profilePrivacy: this.profilePrivacy,
+    totalGamesPlayed: this.totalGamesPlayed,
+    totalWins: this.totalWins,
+    createdAt: this.createdAt
+  };
 };
 
 module.exports = mongoose.model('User', userSchema);

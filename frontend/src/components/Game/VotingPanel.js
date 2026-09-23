@@ -1,36 +1,42 @@
 import React from 'react';
 
 const VotingPanel = ({ teams, votes, onVoteChange, imposters }) => {
-  // Only non-imposter teams vote
-  const voters = teams.filter(t => !imposters.includes(t.teamId));
+  const voters = teams.filter((t) => !imposters.includes(t.teamId));
 
   return (
-    <div className="card">
+    <div className="card voting-panel">
       <div className="card-header">
         <h3>🗳️ Cast Votes</h3>
       </div>
-      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+      <p className="voting-hint">
         Each non-imposter player votes for who they think the imposter is
       </p>
       <div className="voting-grid">
-        {voters.map(voter => (
+        {voters.map((voter) => (
           <div className="vote-row" key={voter.teamId}>
-            <span className="voter-name">{voter.name}</span>
-            <span className="vote-arrow">→</span>
+            <div className="voter-label">
+              <span className="voter-name">{voter.name}</span>
+              <span className="vote-arrow" aria-hidden="true">
+                →
+              </span>
+            </div>
+            <label className="sr-only" htmlFor={`vote-${voter.teamId}`}>
+              {voter.name} votes for
+            </label>
             <select
-              className="form-control"
+              id={`vote-${voter.teamId}`}
+              className="form-control vote-select"
               value={votes[voter.teamId] || ''}
               onChange={(e) => onVoteChange(voter.teamId, e.target.value)}
             >
               <option value="">Select suspect...</option>
               {teams
-                .filter(t => t.teamId !== voter.teamId) // Can't vote for yourself
-                .map(t => (
+                .filter((t) => t.teamId !== voter.teamId)
+                .map((t) => (
                   <option key={t.teamId} value={t.teamId}>
                     {t.name}
                   </option>
-                ))
-              }
+                ))}
             </select>
           </div>
         ))}

@@ -1,16 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { gamesAPI } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 import RoleDesignation from './RoleDesignation';
 import VotingPanel from './VotingPanel';
 import Scoreboard from './Scoreboard';
 import ScoreSettings from './ScoreSettings';
+import {
+  loadGuestGame,
+  saveGuestGame,
+  clearGuestGame,
+  processGuestRound,
+  setPendingGuestSave
+} from '../../utils/guestGame';
 
 const GameSession = () => {
   const { gameId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { isGuest, endGuest, openAuthModal } = useAuth();
 
+  const isGuestSession = gameId === 'guest' || isGuest;
   const forceResumeMode = location.state?.resumeMode === true;
 
   const [game, setGame] = useState(null);
@@ -24,16 +34,32 @@ const GameSession = () => {
   const [roundPhase, setRoundPhase] = useState('setup');
   const [lastRoundResult, setLastRoundResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [endingGame, setEndingGame] = useState(false);
 
-  // Browser back-button exit popup
   const [showBackExitModal, setShowBackExitModal] = useState(false);
   const [backExitProcessing, setBackExitProcessing] = useState(false);
+
+  const [showGuestSaveModal, setShowGuestSaveModal] = useState(false);
+  const [guestWinners, setGuestWinners] = useState([]);
 
   const loadGame = useCallback(async () => {
     try {
       setLoading(true);
+
+      if (isGuestSession) {
+        const local = loadGuestGame();
+        if (!local) {
+          setError('No guest game found. Start a new game from setup.');
+          setGame(null);
+          return;
+        }
+        setGame(local);
+        if (local.numberOfPlayers <= 3) setImposterCount(1);
+        return;
+      }
+
       const response = await gamesAPI.getById(gameId);
       let loadedGame = response.data.game;
 
@@ -49,43 +75,51 @@ const GameSession = () => {
       }
 
       setGame(loadedGame);
-
-      if (loadedGame.numberOfPlayers <= 3) {
-        setImposterCount(1);
-      }
+      if (loadedGame.numberOfPlayers <= 3) setImposterCount(1);
     } catch (err) {
       setError('Failed to load game.');
     } finally {
       setLoading(false);
     }
-  }, [gameId, forceResumeMode]);
+  }, [gameId, forceResumeMode, isGuestSession]);
 
   useEffect(() => {
     loadGame();
   }, [loadGame]);
 
-  // Intercept browser Back button while game is active
   useEffect(() => {
     if (!game || game.status === 'completed') return;
 
-    // Push a dummy state so the first Back press stays on this page
     window.history.pushState({ gameGuard: true }, '', window.location.href);
 
     const onPopState = () => {
-      // Re-push so user cannot leave until they choose an option
       window.history.pushState({ gameGuard: true }, '', window.location.href);
       setShowBackExitModal(true);
     };
 
     window.addEventListener('popstate', onPopState);
-    return () => {
-      window.removeEventListener('popstate', onPopState);
-    };
+    return () => window.removeEventListener('popstate', onPopState);
   }, [game]);
 
   const handleBackEndGame = async () => {
     setBackExitProcessing(true);
     try {
+      if (isGuestSession) {
+        const ended = {
+          ...game,
+          status: 'completed',
+          completedAt: new Date().toISOString()
+        };
+        saveGuestGame(ended);
+        setGame(ended);
+        const maxScore = Math.max(...ended.teams.map((t) => t.totalScore));
+        setGuestWinners(ended.teams.filter((t) => t.totalScore === maxScore).map((w) => w.name));
+        setShowBackExitModal(false);
+        setShowGuestSaveModal(true);
+        setBackExitProcessing(false);
+        return;
+      }
+
       await gamesAPI.complete(gameId);
       setShowBackExitModal(false);
       navigate('/history', { replace: true });
@@ -95,21 +129,16 @@ const GameSession = () => {
     }
   };
 
-  const handleBackContinue = () => {
-    setShowBackExitModal(false);
-  };
+  const handleBackContinue = () => setShowBackExitModal(false);
 
   const handleBackPlayLater = () => {
     setShowBackExitModal(false);
-    // Leave game active — just go to play/home without completing
     navigate('/play', { replace: true });
   };
 
   const handleToggleImposter = (teamId) => {
-    setSelectedImposters(prev => {
-      if (prev.includes(teamId)) {
-        return prev.filter(id => id !== teamId);
-      }
+    setSelectedImposters((prev) => {
+      if (prev.includes(teamId)) return prev.filter((id) => id !== teamId);
       if (prev.length >= imposterCount) return prev;
       return [...prev, teamId];
     });
@@ -117,11 +146,11 @@ const GameSession = () => {
 
   const handleCountChange = (n) => {
     setImposterCount(n);
-    setSelectedImposters(prev => prev.slice(0, n));
+    setSelectedImposters((prev) => prev.slice(0, n));
   };
 
   const handleVoteChange = (voterId, votedForId) => {
-    setVotes(prev => ({ ...prev, [voterId]: votedForId }));
+    setVotes((prev) => ({ ...prev, [voterId]: votedForId }));
   };
 
   const handleProceedToVoting = () => {
@@ -135,11 +164,11 @@ const GameSession = () => {
   };
 
   const handleSubmitRound = async () => {
-    const nonImposters = game.teams.filter(t => !selectedImposters.includes(t.teamId));
-    const missingVotes = nonImposters.filter(t => !votes[t.teamId]);
+    const nonImposters = game.teams.filter((t) => !selectedImposters.includes(t.teamId));
+    const missingVotes = nonImposters.filter((t) => !votes[t.teamId]);
 
     if (missingVotes.length > 0) {
-      setError(`Missing votes from: ${missingVotes.map(t => t.name).join(', ')}`);
+      setError(`Missing votes from: ${missingVotes.map((t) => t.name).join(', ')}`);
       return;
     }
 
@@ -152,13 +181,34 @@ const GameSession = () => {
         votedForId
       }));
 
+      if (isGuestSession) {
+        const result = processGuestRound(game, selectedImposters, voteArray);
+        saveGuestGame(result.game);
+        setGame(result.game);
+        setLastRoundResult(result);
+
+        const { imposterNames, identifiedByNames, fooledByNames, correctCount, missCount } = result.summary;
+        const imposterList = imposterNames.join(', ');
+
+        if (correctCount > 0 && missCount === 0) {
+          setSuccess(`🔍 Perfect round! Everyone caught the imposter (${imposterList})! ${identifiedByNames.join(', ')} all guessed correctly.`);
+        } else if (correctCount > 0) {
+          setSuccess(`🔍 Imposter ${imposterList} was caught by ${identifiedByNames.join(', ')}! But ${fooledByNames.join(', ')} got fooled.`);
+        } else {
+          setSuccess(`🎭 Imposter ${imposterList} fooled EVERYONE and earned +${missCount} points! Fooled: ${fooledByNames.join(', ')}.`);
+        }
+
+        setRoundPhase('result');
+        return;
+      }
+
       const response = await gamesAPI.submitRound(gameId, {
         imposterIds: selectedImposters,
         votes: voteArray
       });
 
       setLastRoundResult(response.data);
-      setGame(prev => ({
+      setGame((prev) => ({
         ...prev,
         teams: response.data.updatedTeams,
         rounds: [...(prev.rounds || []), response.data.round],
@@ -178,7 +228,7 @@ const GameSession = () => {
 
       setRoundPhase('result');
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to submit round.');
+      setError(err.message || err.response?.data?.message || 'Failed to submit round.');
     } finally {
       setSubmitting(false);
     }
@@ -193,16 +243,31 @@ const GameSession = () => {
     setError('');
   };
 
-  const requestEndGame = () => {
-    setShowEndConfirm(true);
-  };
+  const requestEndGame = () => setShowEndConfirm(true);
 
   const confirmEndGame = async () => {
     setEndingGame(true);
     try {
+      if (isGuestSession) {
+        const ended = {
+          ...game,
+          status: 'completed',
+          completedAt: new Date().toISOString()
+        };
+        saveGuestGame(ended);
+        setGame(ended);
+        const maxScore = Math.max(...ended.teams.map((t) => t.totalScore));
+        const winners = ended.teams.filter((t) => t.totalScore === maxScore).map((w) => w.name);
+        setGuestWinners(winners);
+        setSuccess(`🏆 Game Over! Winner(s): ${winners.join(', ')}`);
+        setShowEndConfirm(false);
+        setShowGuestSaveModal(true);
+        return;
+      }
+
       const response = await gamesAPI.complete(gameId);
       setSuccess(`🏆 Game Over! Winner(s): ${response.data.winners.join(', ')}`);
-      setGame(prev => ({ ...prev, status: 'completed' }));
+      setGame((prev) => ({ ...prev, status: 'completed' }));
       setShowEndConfirm(false);
     } catch (err) {
       setError('Failed to end game.');
@@ -211,8 +276,39 @@ const GameSession = () => {
     }
   };
 
+  const handleGuestSaveToCloud = () => {
+    const snapshot = loadGuestGame() || game;
+    if (!snapshot) return;
+    const pending = {
+      ...snapshot,
+      status: 'completed',
+      completedAt: snapshot.completedAt || new Date().toISOString()
+    };
+    setPendingGuestSave(pending);
+    setShowGuestSaveModal(false);
+    openAuthModal({ mode: 'login', reason: 'guest-save', pendingGame: pending });
+  };
+
+  const handleGuestDiscard = () => {
+    clearGuestGame();
+    endGuest();
+    setShowGuestSaveModal(false);
+    navigate('/', { replace: true });
+  };
+
   const handleUpdateSettings = async (settings) => {
     try {
+      if (isGuestSession) {
+        const next = {
+          ...game,
+          floorLimitEnabled: settings.floorLimitEnabled !== undefined ? settings.floorLimitEnabled : game.floorLimitEnabled,
+          floorLimitValue: settings.floorLimitValue !== undefined ? settings.floorLimitValue : game.floorLimitValue
+        };
+        saveGuestGame(next);
+        setGame(next);
+        return;
+      }
+
       const response = await gamesAPI.updateSettings(gameId, settings);
       setGame(response.data.game);
     } catch (err) {
@@ -229,26 +325,53 @@ const GameSession = () => {
     );
   }
 
-  if (!game) return <div className="alert alert-error">Game not found.</div>;
+  if (!game) {
+    return (
+      <div>
+        <div className="alert alert-error">{error || 'Game not found.'}</div>
+        <button className="btn btn-primary" type="button" onClick={() => navigate('/play')}>
+          ← Back to Setup
+        </button>
+      </div>
+    );
+  }
 
-  if (game.status === 'completed') {
+  if (game.status === 'completed' && !isGuestSession) {
     return (
       <div>
         <div className="page-header">
           <h1>🏆 Game Completed</h1>
           <p>{game.gameName}</p>
         </div>
-
         {success && <div className="alert alert-success">{success}</div>}
-
         <Scoreboard teams={game.teams} rounds={game.rounds} />
-
         <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={() => navigate('/play')}>
+          <button className="btn btn-primary" type="button" onClick={() => navigate('/play')}>
             🎮 New Game
           </button>
-          <button className="btn btn-secondary" onClick={() => navigate('/history')}>
+          <button className="btn btn-secondary" type="button" onClick={() => navigate('/history')}>
             📜 View History
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (game.status === 'completed' && isGuestSession && !showGuestSaveModal) {
+    return (
+      <div>
+        <div className="page-header">
+          <h1>🏆 Game Completed (Guest)</h1>
+          <p>{game.gameName}</p>
+        </div>
+        {success && <div className="alert alert-success">{success}</div>}
+        <Scoreboard teams={game.teams} rounds={game.rounds} />
+        <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" type="button" onClick={() => setShowGuestSaveModal(true)}>
+            ☁️ Save to Cloud
+          </button>
+          <button className="btn btn-secondary" type="button" onClick={handleGuestDiscard}>
+            Discard & Leave
           </button>
         </div>
       </div>
@@ -262,11 +385,30 @@ const GameSession = () => {
       <div className="page-header">
         <div className="flex-between">
           <div>
-            <h1>🎮 {game.gameName}</h1>
-            <p>{game.numberOfPlayers} players · Round {(game.currentRound || 0) + 1}</p>
+            <h1>
+              🎮 {game.gameName}
+              {isGuestSession && (
+                <span
+                  style={{
+                    marginLeft: '0.5rem',
+                    fontSize: '0.75rem',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: '999px',
+                    background: 'rgba(239,71,101,0.15)',
+                    color: '#EF4765',
+                    verticalAlign: 'middle'
+                  }}
+                >
+                  GUEST
+                </span>
+              )}
+            </h1>
+            <p>
+              {game.numberOfPlayers} players · Round {(game.currentRound || 0) + 1}
+            </p>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button className="btn btn-danger btn-sm" onClick={requestEndGame}>
+            <button className="btn btn-danger btn-sm" type="button" onClick={requestEndGame}>
               🏁 End Game
             </button>
           </div>
@@ -288,7 +430,7 @@ const GameSession = () => {
 
       <div className="game-layout">
         <div className="game-main">
-          {roundPhase === 'setup' && (
+          {roundPhase === 'setup' && game.status === 'active' && (
             <>
               <RoleDesignation
                 teams={game.teams}
@@ -300,6 +442,7 @@ const GameSession = () => {
               />
               <button
                 className="btn btn-primary btn-lg"
+                type="button"
                 onClick={handleProceedToVoting}
                 disabled={selectedImposters.length !== imposterCount}
               >
@@ -308,12 +451,12 @@ const GameSession = () => {
             </>
           )}
 
-          {roundPhase === 'voting' && (
+          {roundPhase === 'voting' && game.status === 'active' && (
             <>
               <div className="alert alert-info">
                 🎭 Imposter{selectedImposters.length > 1 ? 's' : ''}:{' '}
                 <strong>
-                  {selectedImposters.map(id => game.teams.find(t => t.teamId === id)?.name).join(', ')}
+                  {selectedImposters.map((id) => game.teams.find((t) => t.teamId === id)?.name).join(', ')}
                 </strong>
               </div>
 
@@ -325,11 +468,12 @@ const GameSession = () => {
               />
 
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                <button className="btn btn-secondary" onClick={() => setRoundPhase('setup')}>
+                <button className="btn btn-secondary" type="button" onClick={() => setRoundPhase('setup')}>
                   ← Back
                 </button>
                 <button
                   className="btn btn-success btn-lg"
+                  type="button"
                   onClick={handleSubmitRound}
                   disabled={submitting}
                 >
@@ -342,9 +486,7 @@ const GameSession = () => {
           {roundPhase === 'result' && lastRoundResult && (
             <>
               <div className={`alert ${lastRoundResult.imposterIdentified ? 'alert-success' : 'alert-warning'}`}>
-                {lastRoundResult.imposterIdentified
-                  ? `🔍 Good detective work! `
-                  : `🎭 The imposter escaped! `}
+                {lastRoundResult.imposterIdentified ? '🔍 Good detective work! ' : '🎭 The imposter escaped! '}
                 {success}
               </div>
 
@@ -352,7 +494,7 @@ const GameSession = () => {
                 <div className="card-header">
                   <h3>📊 Round {lastRoundResult.round.roundNumber} Details</h3>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
+                <div className="scoreboard-table-wrap">
                   <table className="scoreboard-table">
                     <thead>
                       <tr>
@@ -365,28 +507,22 @@ const GameSession = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {lastRoundResult.round.scores.map(s => (
+                      {lastRoundResult.round.scores.map((s) => (
                         <tr key={s.teamId}>
                           <td><strong>{s.teamName}</strong></td>
                           <td>
-                            {s.wasImposter ? (
-                              <span className="imposter-badge">🎭 Imposter</span>
-                            ) : '👤 Innocent'}
+                            {s.wasImposter ? <span className="imposter-badge">🎭 Imposter</span> : '👤 Innocent'}
                           </td>
-                          <td>{s.wasImposter ? '—' : (s.votedFor || '—')}</td>
+                          <td>{s.wasImposter ? '—' : s.votedFor || '—'}</td>
                           <td>
                             {s.wasImposter
                               ? `Fooled ${lastRoundResult.summary.missCount}, Caught by ${lastRoundResult.summary.correctCount}`
                               : s.identifiedImposter
                                 ? <span style={{ color: 'var(--accent-success)' }}>✅ Correct</span>
-                                : <span style={{ color: 'var(--accent-danger)' }}>❌ Wrong</span>
-                            }
+                                : <span style={{ color: 'var(--accent-danger)' }}>❌ Wrong</span>}
                           </td>
                           <td>
-                            <strong style={{
-                              color: s.roundScore > 0 ? 'var(--accent-success)' :
-                                s.roundScore < 0 ? 'var(--accent-danger)' : 'var(--text-muted)'
-                            }}>
+                            <strong style={{ color: s.roundScore > 0 ? 'var(--accent-success)' : s.roundScore < 0 ? 'var(--accent-danger)' : 'var(--text-muted)' }}>
                               {s.roundScore > 0 ? '+' : ''}{s.roundScore}
                             </strong>
                           </td>
@@ -400,7 +536,7 @@ const GameSession = () => {
 
               <Scoreboard teams={game.teams} rounds={game.rounds} />
 
-              <button className="btn btn-primary btn-lg" onClick={handleNewRound}>
+              <button className="btn btn-primary btn-lg" type="button" onClick={handleNewRound}>
                 🎲 Start Next Round
               </button>
             </>
@@ -416,7 +552,7 @@ const GameSession = () => {
                 <h3>📋 Round History</h3>
               </div>
               <div className="round-history">
-                {[...game.rounds].reverse().map(round => (
+                {[...game.rounds].reverse().map((round) => (
                   <div className="round-summary" key={round.roundNumber}>
                     <div className="round-header">
                       <span className="round-title">Round {round.roundNumber}</span>
@@ -437,19 +573,6 @@ const GameSession = () => {
                         ❌ Fooled: {round.fooledByNames.join(', ')}
                       </div>
                     )}
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                      {round.scores.map(s => (
-                        <span key={s.teamId} style={{ marginRight: '0.75rem' }}>
-                          {s.teamName}:{' '}
-                          <strong style={{
-                            color: s.roundScore > 0 ? 'var(--accent-success)' :
-                              s.roundScore < 0 ? 'var(--accent-danger)' : 'var(--text-muted)'
-                          }}>
-                            {s.roundScore > 0 ? '+' : ''}{s.roundScore}
-                          </strong>
-                        </span>
-                      ))}
-                    </div>
                   </div>
                 ))}
               </div>
@@ -462,28 +585,21 @@ const GameSession = () => {
         </div>
       </div>
 
-      {/* End Game Confirmation Modal (manual End Game button) */}
       {showEndConfirm && (
         <div className="modal-overlay" onClick={() => !endingGame && setShowEndConfirm(false)}>
           <div className="modal-content exit-modal" onClick={(e) => e.stopPropagation()}>
             <div className="exit-modal-icon">🏁</div>
             <h2>End the Game?</h2>
             <p className="exit-modal-desc">
-              Are you sure you want to end this game? Final scores will be locked and a winner will be declared.
+              {isGuestSession
+                ? 'Final scores will be locked. You can save to cloud (login) or discard.'
+                : 'Are you sure you want to end this game? Final scores will be locked and a winner will be declared.'}
             </p>
             <div className="exit-modal-actions">
-              <button
-                className="btn btn-danger btn-block"
-                onClick={confirmEndGame}
-                disabled={endingGame}
-              >
+              <button className="btn btn-danger btn-block" type="button" onClick={confirmEndGame} disabled={endingGame}>
                 {endingGame ? 'Ending...' : '🏁 Yes, End Game'}
               </button>
-              <button
-                className="btn btn-secondary btn-block"
-                onClick={() => setShowEndConfirm(false)}
-                disabled={endingGame}
-              >
+              <button className="btn btn-secondary btn-block" type="button" onClick={() => setShowEndConfirm(false)} disabled={endingGame}>
                 🎮 Keep Playing
               </button>
             </div>
@@ -491,44 +607,42 @@ const GameSession = () => {
         </div>
       )}
 
-      {/* Browser Back Button Exit Popup — same 3 options */}
       {showBackExitModal && (
-        <div
-          className="modal-overlay"
-          style={{ zIndex: 2000 }}
-          onClick={() => !backExitProcessing && handleBackContinue()}
-        >
-          <div
-            className="modal-content exit-modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: '420px', textAlign: 'center' }}
-          >
+        <div className="modal-overlay" style={{ zIndex: 2000 }} onClick={() => !backExitProcessing && handleBackContinue()}>
+          <div className="modal-content exit-modal" onClick={(e) => e.stopPropagation()}>
             <div className="exit-modal-icon">⚠️</div>
             <h2>Leaving the Game?</h2>
-            <p className="exit-modal-desc">
-              You pressed the browser Back button. What would you like to do with this game?
-            </p>
-            <div className="exit-modal-actions" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <button
-                className="btn btn-danger btn-block"
-                onClick={handleBackEndGame}
-                disabled={backExitProcessing}
-              >
+            <p className="exit-modal-desc">You pressed the browser Back button. What would you like to do with this game?</p>
+            <div className="exit-modal-actions">
+              <button className="btn btn-danger btn-block" type="button" onClick={handleBackEndGame} disabled={backExitProcessing}>
                 {backExitProcessing ? 'Ending...' : '🏁 End Game'}
               </button>
-              <button
-                className="btn btn-success btn-block"
-                onClick={handleBackContinue}
-                disabled={backExitProcessing}
-              >
+              <button className="btn btn-success btn-block" type="button" onClick={handleBackContinue} disabled={backExitProcessing}>
                 🎮 Continue Playing
               </button>
-              <button
-                className="btn btn-secondary btn-block"
-                onClick={handleBackPlayLater}
-                disabled={backExitProcessing}
-              >
+              <button className="btn btn-secondary btn-block" type="button" onClick={handleBackPlayLater} disabled={backExitProcessing}>
                 ⏸️ Play Later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGuestSaveModal && (
+        <div className="modal-overlay" style={{ zIndex: 2100 }}>
+          <div className="modal-content exit-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="exit-modal-icon">☁️</div>
+            <h2>Save Guest Game?</h2>
+            <p className="exit-modal-desc">
+              {guestWinners.length > 0 && <>Winner(s): <strong>{guestWinners.join(', ')}</strong><br /></>}
+              Save this game to your account, or discard it forever.
+            </p>
+            <div className="exit-modal-actions">
+              <button className="btn btn-primary btn-block" type="button" onClick={handleGuestSaveToCloud}>
+                ☁️ Save to Cloud (Login / Signup)
+              </button>
+              <button className="btn btn-secondary btn-block" type="button" onClick={handleGuestDiscard}>
+                🗑️ Discard & Leave
               </button>
             </div>
           </div>

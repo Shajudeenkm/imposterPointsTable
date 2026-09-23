@@ -1,7 +1,6 @@
 import React from 'react';
 
 const Scoreboard = ({ teams, rounds }) => {
-  // Sort teams by total score (descending)
   const sortedTeams = [...teams].sort((a, b) => b.totalScore - a.totalScore);
 
   const getRankClass = (index) => {
@@ -19,48 +18,49 @@ const Scoreboard = ({ teams, rounds }) => {
 
   const lastRound = rounds && rounds.length > 0 ? rounds[rounds.length - 1] : null;
 
+  const getLastRoundScore = (teamId) => {
+    if (!lastRound) return null;
+    return lastRound.scores.find((s) => s.teamId === teamId) || null;
+  };
+
   return (
-    <div className="card">
+    <div className="card scoreboard-card">
       <div className="card-header">
         <h3>📊 Scoreboard</h3>
         {rounds && <span className="round-indicator">Round {rounds.length}</span>}
       </div>
 
-      <div className="scoreboard">
+      {/* Desktop / tablet table */}
+      <div className="scoreboard scoreboard-table-wrap">
         <table className="scoreboard-table">
           <thead>
             <tr>
               <th>#</th>
               <th>Team</th>
-              {lastRound && <th>Last Round</th>}
+              {lastRound && <th>Last</th>}
               <th>Total</th>
             </tr>
           </thead>
           <tbody>
             {sortedTeams.map((team, index) => {
-              const lastRoundScore = lastRound 
-                ? lastRound.scores.find(s => s.teamId === team.teamId)
-                : null;
-
+              const lastRoundScore = getLastRoundScore(team.teamId);
               return (
                 <tr key={team.teamId}>
                   <td>
-                    <span className={getRankClass(index)}>
-                      {index + 1}
-                    </span>
+                    <span className={getRankClass(index)}>{index + 1}</span>
                   </td>
                   <td>
-                    <span style={{ fontWeight: 600 }}>{team.name}</span>
-                    {lastRoundScore?.wasImposter && (
-                      <span className="imposter-badge" style={{ marginLeft: '8px' }}>
-                        🎭 Imposter
+                    <div className="scoreboard-team-cell">
+                      <span className="scoreboard-team-name">{team.name}</span>
+                      <span className="scoreboard-badges">
+                        {lastRoundScore?.wasImposter && (
+                          <span className="imposter-badge">🎭 Imposter</span>
+                        )}
+                        {lastRoundScore?.identifiedImposter && (
+                          <span className="imposter-badge identified-badge">🔍 Found</span>
+                        )}
                       </span>
-                    )}
-                    {lastRoundScore?.identifiedImposter && (
-                      <span className="imposter-badge identified-badge" style={{ marginLeft: '8px' }}>
-                        🔍 Found it
-                      </span>
-                    )}
+                    </div>
                   </td>
                   {lastRound && (
                     <td>
@@ -71,7 +71,7 @@ const Scoreboard = ({ teams, rounds }) => {
                     </td>
                   )}
                   <td>
-                    <span className={getScoreClass(team.totalScore)} style={{ fontSize: '1.1rem' }}>
+                    <span className={`${getScoreClass(team.totalScore)} scoreboard-total`}>
                       {team.totalScore}
                     </span>
                   </td>
@@ -80,6 +80,42 @@ const Scoreboard = ({ teams, rounds }) => {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile card list */}
+      <div className="scoreboard-mobile">
+        {sortedTeams.map((team, index) => {
+          const lastRoundScore = getLastRoundScore(team.teamId);
+          return (
+            <div className="scoreboard-mobile-row" key={team.teamId}>
+              <div className="scoreboard-mobile-left">
+                <span className={getRankClass(index)}>{index + 1}</span>
+                <div className="scoreboard-mobile-meta">
+                  <span className="scoreboard-team-name">{team.name}</span>
+                  <span className="scoreboard-badges">
+                    {lastRoundScore?.wasImposter && (
+                      <span className="imposter-badge">🎭</span>
+                    )}
+                    {lastRoundScore?.identifiedImposter && (
+                      <span className="imposter-badge identified-badge">🔍</span>
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="scoreboard-mobile-right">
+                {lastRound && (
+                  <span className={`${getScoreClass(lastRoundScore?.roundScore || 0)} scoreboard-last`}>
+                    {lastRoundScore?.roundScore > 0 ? '+' : ''}
+                    {lastRoundScore?.roundScore || 0}
+                  </span>
+                )}
+                <span className={`${getScoreClass(team.totalScore)} scoreboard-total`}>
+                  {team.totalScore}
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

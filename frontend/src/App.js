@@ -3,8 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import PrivateRoute from './components/PrivateRoute';
-import Login from './components/Auth/Login';
-import Register from './components/Auth/Register';
+import AuthModal from './components/Auth/AuthModal';
 import TeamSetup from './components/Teams/TeamSetup';
 import GameSession from './components/Game/GameSession';
 import HistoryDashboard from './components/History/HistoryDashboard';
@@ -12,9 +11,8 @@ import GameDetail from './components/History/GameDetail';
 import FavoritesManager from './components/Favorites/FavoritesManager';
 import ProfileSettings from './components/Profile/ProfileSettings';
 import NotFound from './components/NotFound';
-import LandingPage from './components/LandingPage'; // Imported the new landing page
+import LandingPage from './components/LandingPage';
 
-// Dashboard / Home Component (Visible only when logged in)
 const Dashboard = () => {
   const { user } = useAuth();
 
@@ -41,7 +39,8 @@ const Dashboard = () => {
           <div className="stat-value">
             {user?.totalGamesPlayed > 0
               ? Math.round((user.totalWins / user.totalGamesPlayed) * 100)
-              : 0}%
+              : 0}
+            %
           </div>
           <div className="stat-label">Win Rate</div>
         </div>
@@ -73,16 +72,24 @@ const Dashboard = () => {
   );
 };
 
-// Root Router Logic Component
 const RootRoute = () => {
-  const { user, loading } = useAuth();
-  
+  const { user, loading, isGuest } = useAuth();
+
   if (loading) {
-    return <div className="loading-container"><div className="spinner"></div></div>;
+    return (
+      <div className="loading-container">
+        <div className="spinner"></div>
+      </div>
+    );
   }
-  
-  // If user is logged in, show Dashboard. If not, show Landing Page with Modal.
-  return user ? <Dashboard /> : <LandingPage />;
+
+  // Logged-in → dashboard
+  if (user) return <Dashboard />;
+
+  // Active guest session → go straight to setup (don't re-show marketing CTA)
+  if (isGuest) return <Navigate to="/play" replace />;
+
+  return <LandingPage />;
 };
 
 function App() {
@@ -91,36 +98,64 @@ function App() {
       <Router>
         <div className="app-container">
           <Navbar />
+          <AuthModal />
           <main className="main-content">
             <Routes>
-              {/* Standalone auth pages (kept as fallback, but users will mostly use the modal) */}
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
-              
-              {/* Intelligent Root Route */}
+              <Route path="/login" element={<Navigate to="/" replace />} />
+              <Route path="/register" element={<Navigate to="/" replace />} />
+
               <Route path="/" element={<RootRoute />} />
-              
-              {/* Protected Routes */}
-              <Route path="/play" element={
-                <PrivateRoute><TeamSetup /></PrivateRoute>
-              } />
-              <Route path="/game/:gameId" element={
-                <PrivateRoute><GameSession /></PrivateRoute>
-              } />
-              <Route path="/history" element={
-                <PrivateRoute><HistoryDashboard /></PrivateRoute>
-              } />
-              <Route path="/history/game/:gameId" element={
-                <PrivateRoute><GameDetail /></PrivateRoute>
-              } />
-              <Route path="/favorites" element={
-                <PrivateRoute><FavoritesManager /></PrivateRoute>
-              } />
-              <Route path="/profile" element={
-                <PrivateRoute><ProfileSettings /></PrivateRoute>
-              } />
-              
-              {/* 404 Catch-All Route */}
+
+              <Route
+                path="/play"
+                element={
+                  <PrivateRoute allowGuest>
+                    <TeamSetup />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/game/:gameId"
+                element={
+                  <PrivateRoute allowGuest>
+                    <GameSession />
+                  </PrivateRoute>
+                }
+              />
+
+              <Route
+                path="/history"
+                element={
+                  <PrivateRoute>
+                    <HistoryDashboard />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/history/game/:gameId"
+                element={
+                  <PrivateRoute>
+                    <GameDetail />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/favorites"
+                element={
+                  <PrivateRoute>
+                    <FavoritesManager />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/profile"
+                element={
+                  <PrivateRoute>
+                    <ProfileSettings />
+                  </PrivateRoute>
+                }
+              />
+
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>
