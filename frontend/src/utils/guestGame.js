@@ -85,11 +85,30 @@ export const generateGuestTeams = (numberOfTeams, category = 'malayalam') => {
   }));
 };
 
+/**
+ * Generate a single random name from a category, excluding names already used.
+ * Used by "Add Another Player" and per-team regenerate buttons.
+ */
+export const generateSingleGuestName = (category = 'malayalam', excludeNames = []) => {
+  const pool = GUEST_NAME_POOLS[category] || GUEST_NAME_POOLS.malayalam;
+  const excludeLower = new Set(excludeNames.map((n) => (n || '').toLowerCase().trim()));
+  const available = pool.filter((n) => !excludeLower.has(n.toLowerCase()));
+  if (available.length === 0) {
+    // Fallback to numbered team name
+    let counter = excludeNames.length + 1;
+    while (excludeLower.has(`team ${counter}`.toLowerCase())) counter += 1;
+    return `Team ${counter}`;
+  }
+  return available[Math.floor(Math.random() * available.length)];
+};
+
 export const createGuestGame = ({
   teams,
   gameName,
   floorLimitEnabled = false,
-  floorLimitValue = 0
+  floorLimitValue = 0,
+  votingMode = 'single',
+  allowImposterVoting = false
 }) => ({
   _id: 'guest',
   gameName: gameName || `Game ${new Date().toLocaleDateString()}`,
@@ -102,6 +121,8 @@ export const createGuestGame = ({
   numberOfPlayers: teams.length,
   floorLimitEnabled: !!floorLimitEnabled,
   floorLimitValue: Number(floorLimitValue) || 0,
+  votingMode: votingMode === 'multi' ? 'multi' : 'single',
+  allowImposterVoting: !!allowImposterVoting,
   status: 'active',
   currentRound: 0,
   createdAt: new Date().toISOString(),
@@ -152,7 +173,11 @@ export const clearPendingGuestSave = () => {
   localStorage.removeItem(PENDING_SAVE_KEY);
 };
 
-/** Same scoring formula as backend/routes/games.js */
+/**
+ * Mirrors backend/routes/games.js scoring exactly.
+ * `votes` is an array of { voterId, votedForId } — one entry per vote cast.
+ * A voter may appear multiple times (multi-vote mode).
+ */
 export const processGuestRound = (game, imposterIds, votes) => {
   if (imposterIds.length >= game.numberOfPlayers - 1) {
     throw new Error(
@@ -160,36 +185,59 @@ export const processGuestRound = (game, imposterIds, votes) => {
     );
   }
 
+  const isMultiVote = game.votingMode === 'multi' && imposterIds.length >= 2 && game.numberOfPlayers >= 5;
+  const allowImposterVoting = !!game.allowImposterVoting && game.numberOfPlayers >= 5;
+  // Imposter votes only affect their score in multi mode
+  const imposterVotingCountsForScore = isMultiVote && allowImposterVoting;
+
   const imposterNames = imposterIds.map((id) => {
     const team = game.teams.find((t) => t.teamId === id);
     return team ? team.name : 'Unknown';
   });
 
-  const nonImposterVoters = votes.filter((v) => !imposterIds.includes(v.voterId));
-  const voterResults = {};
-  const voterVoteMap = {};
-
-  nonImposterVoters.forEach((v) => {
-    voterResults[v.voterId] = imposterIds.includes(v.votedForId);
+  // Group votes per voter
+  const votesByVoter = {};
+  votes.forEach((v) => {
+    if (!votesByVoter[v.voterId]) votesByVoter[v.voterId] = [];
     const votedTeam = game.teams.find((t) => t.teamId === v.votedForId);
-    voterVoteMap[v.voterId] = votedTeam ? votedTeam.name : 'Unknown';
+    votesByVoter[v.voterId].push({
+      votedForId: v.votedForId,
+      votedForName: votedTeam ? votedTeam.name : 'Unknown',
+      isCorrect: imposterIds.includes(v.votedForId)
+    });
   });
 
-  const correctCount = Object.values(voterResults).filter((r) => r === true).length;
-  const missCount = Object.values(voterResults).filter((r) => r === false).length;
+  const allowedVoterIds = allowImposterVoting
+    ? game.teams.map((t) => t.teamId)
+    : game.teams.filter((t) => !imposterIds.includes(t.teamId)).map((t) => t.teamId);
+  Object.keys(votesByVoter).forEach((voterId) => {
+    if (!allowedVoterIds.includes(voterId)) delete votesByVoter[voterId];
+  });
 
-  const identifiedByIds = Object.entries(voterResults)
-    .filter(([, correct]) => correct)
-    .map(([id]) => id);
-  const identifiedByNames = identifiedByIds.map((id) => {
+  // Aggregates from NON-IMPOSTER votes only
+  let correctCount = 0;
+  let missCount = 0;
+  const identifiedByIds = new Set();
+  const fooledByIds = new Set();
+
+  Object.entries(votesByVoter).forEach(([voterId, voterVotes]) => {
+    if (imposterIds.includes(voterId)) return;
+    voterVotes.forEach((vv) => {
+      if (vv.isCorrect) {
+        correctCount += 1;
+        identifiedByIds.add(voterId);
+      } else {
+        missCount += 1;
+        fooledByIds.add(voterId);
+      }
+    });
+  });
+
+  const identifiedByNames = Array.from(identifiedByIds).map((id) => {
     const t = game.teams.find((tm) => tm.teamId === id);
     return t ? t.name : 'Unknown';
   });
-
-  const fooledByIds = Object.entries(voterResults)
-    .filter(([, correct]) => !correct)
-    .map(([id]) => id);
-  const fooledByNames = fooledByIds.map((id) => {
+  const fooledByNames = Array.from(fooledByIds).map((id) => {
     const t = game.teams.find((tm) => tm.teamId === id);
     return t ? t.name : 'Unknown';
   });
@@ -199,11 +247,22 @@ export const processGuestRound = (game, imposterIds, votes) => {
   const roundScores = updatedTeams.map((team) => {
     const isImposter = imposterIds.includes(team.teamId);
     let roundScore = 0;
+    const teamVotes = votesByVoter[team.teamId] || [];
 
     if (isImposter) {
+      // Base: fool bonus from non-imposter votes
       roundScore = missCount - correctCount;
+
+      // Multi-vote + imposter-voting: imposters get ±1 per own vote too
+      if (imposterVotingCountsForScore) {
+        teamVotes.forEach((vv) => {
+          roundScore += vv.isCorrect ? 1 : -1;
+        });
+      }
     } else {
-      roundScore = voterResults[team.teamId] === true ? 1 : -1;
+      teamVotes.forEach((vv) => {
+        roundScore += vv.isCorrect ? 1 : -1;
+      });
     }
 
     let newCumulativeScore = team.totalScore + roundScore;
@@ -215,6 +274,8 @@ export const processGuestRound = (game, imposterIds, votes) => {
 
     team.totalScore = newCumulativeScore;
 
+    const correctInThisTeam = teamVotes.filter((vv) => vv.isCorrect).length;
+
     return {
       teamId: team.teamId,
       teamName: team.name,
@@ -222,28 +283,44 @@ export const processGuestRound = (game, imposterIds, votes) => {
       cumulativeScore: newCumulativeScore,
       wasImposter: isImposter,
       wasIdentified: isImposter && correctCount > 0,
-      identifiedImposter: voterResults[team.teamId] === true,
-      votedFor: voterVoteMap[team.teamId] || ''
+      identifiedImposter: !isImposter && correctInThisTeam > 0,
+      votedFor: teamVotes.length > 0 ? teamVotes.map((vv) => vv.votedForName).join(', ') : '',
+      votes: teamVotes.map((vv) => ({
+        votedForId: vv.votedForId,
+        votedForName: vv.votedForName,
+        isCorrect: vv.isCorrect
+      }))
     };
+  });
+
+  const flatVotes = [];
+  Object.entries(votesByVoter).forEach(([voterId, voterVotes]) => {
+    const voterTeam = game.teams.find((t) => t.teamId === voterId);
+    const voterName = voterTeam ? voterTeam.name : 'Unknown';
+    voterVotes.forEach((vv) => {
+      flatVotes.push({
+        voterId,
+        voterName,
+        votedForId: vv.votedForId,
+        votedForName: vv.votedForName
+      });
+    });
   });
 
   const newRound = {
     roundNumber: game.currentRound + 1,
     imposterIds,
     imposterNames,
-    votes: votes.map((v) => ({
-      voterId: v.voterId,
-      voterName: game.teams.find((t) => t.teamId === v.voterId)?.name || 'Unknown',
-      votedForId: v.votedForId,
-      votedForName: game.teams.find((t) => t.teamId === v.votedForId)?.name || 'Unknown'
-    })),
+    votes: flatVotes,
     scores: roundScores,
     imposterIdentified: correctCount > 0,
-    identifiedByIds,
+    identifiedByIds: Array.from(identifiedByIds),
     identifiedByNames,
     fooledByNames,
     correctCount,
     missCount,
+    votingMode: isMultiVote ? 'multi' : 'single',
+    allowImposterVoting,
     completedAt: new Date().toISOString()
   };
 
@@ -278,7 +355,9 @@ export const uploadGuestGameToCloud = async (guestGame) => {
     })),
     gameName: guestGame.gameName || `Game ${new Date().toLocaleDateString()}`,
     floorLimitEnabled: !!guestGame.floorLimitEnabled,
-    floorLimitValue: guestGame.floorLimitValue || 0
+    floorLimitValue: guestGame.floorLimitValue || 0,
+    votingMode: guestGame.votingMode || 'single',
+    allowImposterVoting: !!guestGame.allowImposterVoting
   });
 
   const newId = createRes.data.game._id;

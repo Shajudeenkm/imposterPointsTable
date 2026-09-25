@@ -1,6 +1,6 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import PrivateRoute from './components/PrivateRoute';
 import AuthModal from './components/Auth/AuthModal';
@@ -10,6 +10,7 @@ import HistoryDashboard from './components/History/HistoryDashboard';
 import GameDetail from './components/History/GameDetail';
 import FavoritesManager from './components/Favorites/FavoritesManager';
 import ProfileSettings from './components/Profile/ProfileSettings';
+import HelpPage from './components/HelpPage';
 import NotFound from './components/NotFound';
 import LandingPage from './components/LandingPage';
 
@@ -62,10 +63,10 @@ const Dashboard = () => {
           <h3>Favorites</h3>
           <p>Your saved sessions</p>
         </a>
-        <a href="/profile" className="action-card">
-          <div className="action-icon">⚙️</div>
-          <h3>Settings</h3>
-          <p>Manage your profile</p>
+        <a href="/help" className="action-card">
+          <div className="action-icon">❓</div>
+          <h3>Help & Rules</h3>
+          <p>Learn how to play</p>
         </a>
       </div>
     </div>
@@ -83,85 +84,81 @@ const RootRoute = () => {
     );
   }
 
-  // Logged-in → dashboard
   if (user) return <Dashboard />;
-
-  // Active guest session → go straight to setup (don't re-show marketing CTA)
   if (isGuest) return <Navigate to="/play" replace />;
-
   return <LandingPage />;
 };
 
 function App() {
+  // NO AuthProvider here — already in index.js
+  // NO BrowserRouter here — already in index.js
   return (
-    <AuthProvider>
-      <Router>
-        <div className="app-container">
-          <Navbar />
-          <AuthModal />
-          <main className="main-content">
-            <Routes>
-              <Route path="/login" element={<Navigate to="/" replace />} />
-              <Route path="/register" element={<Navigate to="/" replace />} />
+    <div className="app-container">
+      <Navbar />
+      <AuthModal />
+      <main className="main-content">
+        <Routes>
+          <Route path="/login" element={<Navigate to="/" replace />} />
+          <Route path="/register" element={<Navigate to="/" replace />} />
 
-              <Route path="/" element={<RootRoute />} />
+          <Route path="/" element={<RootRoute />} />
 
-              <Route
-                path="/play"
-                element={
-                  <PrivateRoute allowGuest>
-                    <TeamSetup />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/game/:gameId"
-                element={
-                  <PrivateRoute allowGuest>
-                    <GameSession />
-                  </PrivateRoute>
-                }
-              />
+          <Route
+            path="/play"
+            element={
+              <PrivateRoute allowGuest>
+                <TeamSetup />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/game/:gameId"
+            element={
+              <PrivateRoute allowGuest>
+                <GameSession />
+              </PrivateRoute>
+            }
+          />
 
-              <Route
-                path="/history"
-                element={
-                  <PrivateRoute>
-                    <HistoryDashboard />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/history/game/:gameId"
-                element={
-                  <PrivateRoute>
-                    <GameDetail />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/favorites"
-                element={
-                  <PrivateRoute>
-                    <FavoritesManager />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/profile"
-                element={
-                  <PrivateRoute>
-                    <ProfileSettings />
-                  </PrivateRoute>
-                }
-              />
+          <Route
+            path="/history"
+            element={
+              <PrivateRoute>
+                <HistoryDashboard />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/history/game/:gameId"
+            element={
+              <PrivateRoute>
+                <GameDetail />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/favorites"
+            element={
+              <PrivateRoute>
+                <FavoritesManager />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <PrivateRoute>
+                <ProfileSettings />
+              </PrivateRoute>
+            }
+          />
 
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </main>
-        </div>
-      </Router>
-    </AuthProvider>
+          <Route path="/help" element={<HelpPage />} />
+
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </main>
+    </div>
   );
 }
 

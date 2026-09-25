@@ -15,7 +15,10 @@ router.post('/', auth, [
   body('teams').isArray({ min: 3 }).withMessage('At least 3 teams are required'),
   body('gameName').optional().trim().isLength({ max: 100 }),
   body('floorLimitEnabled').optional().isBoolean(),
-  body('floorLimitValue').optional().isNumeric()
+  body('floorLimitValue').optional().isNumeric(),
+  body('votingMode').optional().isIn(['single', 'multi']),
+  body('allowImposterVoting').optional().isBoolean(),
+  body('requiredVotesPerPlayer').optional().isInt({ min: 1, max: 50 })
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -24,19 +27,57 @@ router.post('/', auth, [
     }
 
     // Door 6: Strict field allowlist (no passing full req.body)
-    const { teams, gameName, floorLimitEnabled, floorLimitValue } = req.body;
+    const {
+      teams,
+      gameName,
+      floorLimitEnabled,
+      floorLimitValue,
+      votingMode,
+      allowImposterVoting,
+      requiredVotesPerPlayer
+    } = req.body;
+
+    // Door 8: Server-side validation of incoming team names
+    const seenNames = new Set();
+    const validatedTeams = [];
+
+    for (let i = 0; i < teams.length; i++) {
+      const t = teams[i];
+      const cleanedName = String(t?.name || '').trim();
+
+      if (!cleanedName) {
+        return res.status(400).json({ message: `Player ${i + 1} name is required.` });
+      }
+
+      if (cleanedName.length > 40) {
+        return res.status(400).json({
+          message: `Player name "${cleanedName.substring(0, 10)}..." exceeds maximum limit of 40 characters.`
+        });
+      }
+
+      const lowerName = cleanedName.toLowerCase();
+      if (seenNames.has(lowerName)) {
+        return res.status(400).json({ message: 'Duplicate team names are not allowed.' });
+      }
+      seenNames.add(lowerName);
+
+      validatedTeams.push({
+        teamId: t.teamId || `team_${Date.now()}_${i}`,
+        name: cleanedName,
+        totalScore: 0
+      });
+    }
 
     const game = new Game({
       userId: req.userId,
       gameName: gameName || `Game ${new Date().toLocaleDateString()}`,
-      teams: teams.map((team, index) => ({
-        teamId: team.teamId || `team_${Date.now()}_${index}`,
-        name: team.name,
-        totalScore: 0
-      })),
-      numberOfPlayers: teams.length,
+      teams: validatedTeams,
+      numberOfPlayers: validatedTeams.length,
       floorLimitEnabled: floorLimitEnabled || false,
       floorLimitValue: floorLimitValue || 0,
+      votingMode: votingMode === 'multi' ? 'multi' : 'single',
+      allowImposterVoting: allowImposterVoting === true,
+      requiredVotesPerPlayer: Number.isInteger(requiredVotesPerPlayer) ? requiredVotesPerPlayer : 1,
       currentRound: 0,
       status: 'active'
     });
@@ -62,7 +103,7 @@ router.get('/:gameId', auth, async (req, res) => {
     // Door 12: Remove internal __v
     const game = await Game.findOne({ _id: req.params.gameId, userId: req.userId }).select('-__v');
     if (!game) return res.status(404).json({ message: 'Game not found.' });
-    
+
     res.json({ game });
   } catch (error) {
     console.error('Get game error:', error.message);
@@ -87,7 +128,7 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-// POST /api/games/:gameId/rounds - Submit a round (FIXED SCORING)
+// POST /api/games/:gameId/rounds - Submit a round (supports single + multi vote)
 router.post('/:gameId/rounds', auth, [
   body('imposterIds').isArray({ min: 1 }).withMessage('At least one imposter is required'),
   body('votes').isArray().withMessage('Votes array is required')
@@ -113,44 +154,92 @@ router.post('/:gameId/rounds', auth, [
       });
     }
 
+    // Mode determination
+    const isMultiVote = game.votingMode === 'multi' && imposterIds.length >= 2 && game.numberOfPlayers >= 5;
+    const allowImposterVoting = !!game.allowImposterVoting && game.numberOfPlayers >= 5;
+    // IMPORTANT: Imposter voting only affects imposter scores in MULTI mode.
+    const imposterVotingCountsForScore = isMultiVote && allowImposterVoting;
+
     const imposterNames = imposterIds.map(id => {
       const team = game.teams.find(t => t.teamId === id);
       return team ? team.name : 'Unknown';
     });
 
-    const nonImposterVoters = votes.filter(v => !imposterIds.includes(v.voterId));
-    const voterResults = {};
-    const voterVoteMap = {};
-    
-    nonImposterVoters.forEach(v => {
-      voterResults[v.voterId] = imposterIds.includes(v.votedForId);
+    // Group votes per voter
+    const votesByVoter = {};
+
+    votes.forEach(v => {
+      if (!votesByVoter[v.voterId]) votesByVoter[v.voterId] = [];
       const votedTeam = game.teams.find(t => t.teamId === v.votedForId);
-      voterVoteMap[v.voterId] = votedTeam ? votedTeam.name : 'Unknown';
+      votesByVoter[v.voterId].push({
+        votedForId: v.votedForId,
+        votedForName: votedTeam ? votedTeam.name : 'Unknown',
+        isCorrect: imposterIds.includes(v.votedForId)
+      });
     });
 
-    const correctCount = Object.values(voterResults).filter(r => r === true).length;
-    const missCount = Object.values(voterResults).filter(r => r === false).length;
+    // Determine allowed voters
+    const allowedVoterIds = allowImposterVoting
+      ? game.teams.map(t => t.teamId)
+      : game.teams.filter(t => !imposterIds.includes(t.teamId)).map(t => t.teamId);
 
-    const identifiedByIds = Object.entries(voterResults).filter(([_, correct]) => correct).map(([id]) => id);
-    const identifiedByNames = identifiedByIds.map(id => {
+    // Filter out disallowed voter entries
+    Object.keys(votesByVoter).forEach(voterId => {
+      if (!allowedVoterIds.includes(voterId)) {
+        delete votesByVoter[voterId];
+      }
+    });
+
+    // Aggregate totals (from NON-IMPOSTER votes only — imposter fool bonus is based on these)
+    let correctCount = 0;
+    let missCount = 0;
+    const identifiedByIds = new Set();
+    const fooledByIds = new Set();
+
+    Object.entries(votesByVoter).forEach(([voterId, voterVotes]) => {
+      if (imposterIds.includes(voterId)) return; // skip imposters for correct/miss tally
+      voterVotes.forEach(vv => {
+        if (vv.isCorrect) {
+          correctCount += 1;
+          identifiedByIds.add(voterId);
+        } else {
+          missCount += 1;
+          fooledByIds.add(voterId);
+        }
+      });
+    });
+
+    const identifiedByNames = Array.from(identifiedByIds).map(id => {
       const t = game.teams.find(tm => tm.teamId === id);
       return t ? t.name : 'Unknown';
     });
 
-    const fooledByIds = Object.entries(voterResults).filter(([_, correct]) => !correct).map(([id]) => id);
-    const fooledByNames = fooledByIds.map(id => {
+    const fooledByNames = Array.from(fooledByIds).map(id => {
       const t = game.teams.find(tm => tm.teamId === id);
       return t ? t.name : 'Unknown';
     });
 
+    // Per-team round score
     const roundScores = game.teams.map(team => {
       const isImposter = imposterIds.includes(team.teamId);
       let roundScore = 0;
+      const teamVotes = votesByVoter[team.teamId] || [];
 
       if (isImposter) {
+        // Base: fool bonus from non-imposter votes
         roundScore = missCount - correctCount;
+
+        // If multi-vote + imposter voting is on, imposters get ±1 for their own votes too
+        if (imposterVotingCountsForScore) {
+          teamVotes.forEach(vv => {
+            roundScore += vv.isCorrect ? 1 : -1;
+          });
+        }
       } else {
-        roundScore = voterResults[team.teamId] === true ? 1 : -1;
+        // Non-imposter: +1 for each correct vote, -1 for each wrong vote
+        teamVotes.forEach(vv => {
+          roundScore += vv.isCorrect ? 1 : -1;
+        });
       }
 
       let newCumulativeScore = team.totalScore + roundScore;
@@ -160,6 +249,9 @@ router.post('/:gameId/rounds', auth, [
         roundScore = game.floorLimitValue - team.totalScore;
       }
 
+      const correctInThisTeam = teamVotes.filter(vv => vv.isCorrect).length;
+      const primaryVote = teamVotes[0];
+
       return {
         teamId: team.teamId,
         teamName: team.name,
@@ -167,8 +259,15 @@ router.post('/:gameId/rounds', auth, [
         cumulativeScore: newCumulativeScore,
         wasImposter: isImposter,
         wasIdentified: isImposter && correctCount > 0,
-        identifiedImposter: voterResults[team.teamId] === true,
-        votedFor: voterVoteMap[team.teamId] || ''
+        identifiedImposter: !isImposter && correctInThisTeam > 0,
+        votedFor: primaryVote
+          ? teamVotes.map(vv => vv.votedForName).join(', ')
+          : '',
+        votes: teamVotes.map(vv => ({
+          votedForId: vv.votedForId,
+          votedForName: vv.votedForName,
+          isCorrect: vv.isCorrect
+        }))
       };
     });
 
@@ -177,23 +276,34 @@ router.post('/:gameId/rounds', auth, [
       if (team) team.totalScore = rs.cumulativeScore;
     });
 
+    const flatVotes = [];
+    Object.entries(votesByVoter).forEach(([voterId, voterVotes]) => {
+      const voterTeam = game.teams.find(t => t.teamId === voterId);
+      const voterName = voterTeam ? voterTeam.name : 'Unknown';
+      voterVotes.forEach(vv => {
+        flatVotes.push({
+          voterId,
+          voterName,
+          votedForId: vv.votedForId,
+          votedForName: vv.votedForName
+        });
+      });
+    });
+
     const newRound = {
       roundNumber: game.currentRound + 1,
       imposterIds,
       imposterNames,
-      votes: votes.map(v => ({
-        voterId: v.voterId,
-        voterName: game.teams.find(t => t.teamId === v.voterId)?.name || 'Unknown',
-        votedForId: v.votedForId,
-        votedForName: game.teams.find(t => t.teamId === v.votedForId)?.name || 'Unknown'
-      })),
+      votes: flatVotes,
       scores: roundScores,
       imposterIdentified: correctCount > 0,
-      identifiedByIds,
+      identifiedByIds: Array.from(identifiedByIds),
       identifiedByNames,
       fooledByNames,
       correctCount,
       missCount,
+      votingMode: isMultiVote ? 'multi' : 'single',
+      allowImposterVoting,
       completedAt: new Date()
     };
 
@@ -231,10 +341,35 @@ router.put('/:gameId/teams', auth, async (req, res) => {
     const game = await Game.findOne({ _id: req.params.gameId, userId: req.userId });
     if (!game) return res.status(404).json({ message: 'Game not found.' });
 
-    teams.forEach(update => {
+    const seenNames = new Set();
+    const processedUpdates = [];
+
+    for (let i = 0; i < teams.length; i++) {
+      const update = teams[i];
       if (update.teamId && update.name) {
-        const team = game.teams.find(t => t.teamId === update.teamId);
-        if (team) team.name = String(update.name).trim().substring(0, 50);
+        const cleanedName = String(update.name).trim();
+
+        if (!cleanedName) {
+          return res.status(400).json({ message: 'All player names must be populated.' });
+        }
+
+        if (cleanedName.length > 40) {
+          return res.status(400).json({ message: `Player name exceeds the 40 character maximum.` });
+        }
+
+        const lowerName = cleanedName.toLowerCase();
+        if (seenNames.has(lowerName)) {
+          return res.status(400).json({ message: 'Duplicate team names are not allowed.' });
+        }
+        seenNames.add(lowerName);
+        processedUpdates.push({ teamId: update.teamId, name: cleanedName });
+      }
+    }
+
+    processedUpdates.forEach(update => {
+      const team = game.teams.find(t => t.teamId === update.teamId);
+      if (team) {
+        team.name = update.name;
       }
     });
 
@@ -279,12 +414,24 @@ router.put('/:gameId/settings', auth, async (req, res) => {
   try {
     if (!isValidId(req.params.gameId)) return res.status(400).json({ message: 'Invalid Game ID.' });
 
-    const { floorLimitEnabled, floorLimitValue } = req.body;
+    const {
+      floorLimitEnabled,
+      floorLimitValue,
+      votingMode,
+      allowImposterVoting,
+      requiredVotesPerPlayer
+    } = req.body;
+
     const game = await Game.findOne({ _id: req.params.gameId, userId: req.userId });
     if (!game) return res.status(404).json({ message: 'Game not found.' });
 
     if (typeof floorLimitEnabled === 'boolean') game.floorLimitEnabled = floorLimitEnabled;
     if (typeof floorLimitValue === 'number') game.floorLimitValue = floorLimitValue;
+    if (votingMode === 'single' || votingMode === 'multi') game.votingMode = votingMode;
+    if (typeof allowImposterVoting === 'boolean') game.allowImposterVoting = allowImposterVoting;
+    if (Number.isInteger(requiredVotesPerPlayer) && requiredVotesPerPlayer >= 1) {
+      game.requiredVotesPerPlayer = requiredVotesPerPlayer;
+    }
 
     await game.save();
     res.json({ message: 'Game settings updated.', game });
@@ -320,7 +467,7 @@ router.delete('/:gameId', auth, async (req, res) => {
 
     const game = await Game.findOneAndDelete({ _id: req.params.gameId, userId: req.userId });
     if (!game) return res.status(404).json({ message: 'Game not found.' });
-    
+
     res.json({ message: 'Game deleted successfully.' });
   } catch (error) {
     console.error('Game deletion error:', error.message);

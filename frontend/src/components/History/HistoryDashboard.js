@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { historyAPI } from '../../services/api';
 
 const HistorySkeleton = () => (
@@ -8,7 +9,6 @@ const HistorySkeleton = () => (
       <div className="skeleton skeleton-title" />
       <div className="skeleton skeleton-text skeleton-text-md" />
     </div>
-
     <div className="dashboard-grid history-stats-grid">
       {[0, 1, 2].map((i) => (
         <div className="stat-card skeleton-card" key={i}>
@@ -18,48 +18,15 @@ const HistorySkeleton = () => (
         </div>
       ))}
     </div>
-
-    <div className="card mb-3 history-summary-card">
-      <div className="card-header">
-        <div className="skeleton skeleton-heading" />
-      </div>
-      <div className="history-summary-scroll">
-        {[0, 1, 2, 3].map((i) => (
-          <div className="history-summary-chip skeleton-chip" key={i}>
-            <div className="skeleton skeleton-text skeleton-text-sm" />
-            <div className="skeleton skeleton-text skeleton-text-md" />
-            <div className="skeleton skeleton-text skeleton-text-xs" />
-          </div>
-        ))}
-      </div>
-    </div>
-
     <div className="history-filters skeleton-filters">
-      {[0, 1, 2, 3, 4].map((i) => (
-        <div className="skeleton skeleton-pill" key={i} />
-      ))}
+      {[0, 1, 2, 3, 4].map((i) => <div className="skeleton skeleton-pill" key={i} />)}
     </div>
-
     <div className="history-list">
       {[0, 1, 2, 3].map((i) => (
         <div className="history-item skeleton-history-item" key={i}>
-          <div className="history-item-main" style={{ pointerEvents: 'none' }}>
-            <div className="game-info">
-              <div className="game-info-body" style={{ flex: 1 }}>
-                <div className="skeleton skeleton-text skeleton-text-lg" />
-                <div className="skeleton skeleton-text skeleton-text-md" />
-                <div className="skeleton-chip-row">
-                  <div className="skeleton skeleton-chip-sm" />
-                  <div className="skeleton skeleton-chip-sm" />
-                  <div className="skeleton skeleton-chip-sm" />
-                </div>
-              </div>
-              <div className="skeleton skeleton-text skeleton-text-xs skeleton-date" />
-            </div>
-          </div>
-          <div className="history-item-actions">
-            <div className="skeleton skeleton-btn" />
-            <div className="skeleton skeleton-btn" />
+          <div className="history-item-main" style={{ pointerEvents: 'none', padding: '20px' }}>
+             <div className="skeleton skeleton-text skeleton-text-lg" />
+             <div className="skeleton skeleton-text skeleton-text-md" />
           </div>
         </div>
       ))}
@@ -75,6 +42,9 @@ const HistoryDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [pagination, setPagination] = useState({});
+
+  const [showPlayModal, setShowPlayModal] = useState(false);
+  const [selectedGameForPlay, setSelectedGameForPlay] = useState(null);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -92,15 +62,13 @@ const HistoryDashboard = () => {
       setPagination(historyRes.data.pagination);
       setSummary(summaryRes.data.summary);
     } catch (err) {
-      console.error('Failed to load history:', err);
+      toast.error('Failed to load history.');
     } finally {
       setLoading(false);
     }
   }, [filter]);
 
-  useEffect(() => {
-    loadHistory();
-  }, [loadHistory]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const getWinner = (teams) => {
     if (!teams || teams.length === 0) return null;
@@ -108,10 +76,18 @@ const HistoryDashboard = () => {
     return teams.find((t) => t.totalScore === maxScore);
   };
 
-  const handlePlayAgain = (e, game) => {
+  const openPlayModal = (e, game) => {
     e.preventDefault();
     e.stopPropagation();
+    setSelectedGameForPlay(game);
+    setShowPlayModal(true);
+  };
+
+  const handleRematch = () => {
+    if (!selectedGameForPlay) return;
+    const game = selectedGameForPlay;
     const teamNames = (game.teams || []).map((t) => t.name).filter(Boolean);
+    setShowPlayModal(false);
     navigate('/play', {
       state: {
         rematch: true,
@@ -134,9 +110,7 @@ const HistoryDashboard = () => {
     { key: 'year', label: 'This Year' }
   ];
 
-  if (loading) {
-    return <HistorySkeleton />;
-  }
+  if (loading) return <HistorySkeleton />;
 
   return (
     <div className="history-dashboard">
@@ -165,9 +139,7 @@ const HistoryDashboard = () => {
 
       {summary.length > 0 && (
         <div className="card mb-3 history-summary-card">
-          <div className="card-header">
-            <h3>📅 Monthly Summary</h3>
-          </div>
+          <div className="card-header"><h3>📅 Monthly Summary</h3></div>
           <div className="history-summary-scroll">
             {summary.slice(0, 6).map((item) => (
               <div key={item.month} className="history-summary-chip">
@@ -180,13 +152,11 @@ const HistoryDashboard = () => {
         </div>
       )}
 
-      <div className="history-filters" role="tablist" aria-label="History period">
+      <div className="history-filters" role="tablist">
         {filters.map((f) => (
           <button
             key={f.key}
             type="button"
-            role="tab"
-            aria-selected={filter === f.key}
             className={`filter-btn ${filter === f.key ? 'active' : ''}`}
             onClick={() => setFilter(f.key)}
           >
@@ -200,18 +170,18 @@ const HistoryDashboard = () => {
           <div className="empty-icon">🎮</div>
           <h3>No games found</h3>
           <p>Start playing to build your history!</p>
-          <Link to="/play" className="btn btn-primary mt-2">
-            Start a Game
-          </Link>
+          <Link to="/play" className="btn btn-primary mt-2">Start a Game</Link>
         </div>
       ) : (
         <div className="history-list">
           {games.map((game) => {
             const winner = getWinner(game.teams);
-            const gameId = game._id || game.id;
+            // FIX: Guaranteed valid ID string, no chance of "undefined"
+            const gameId = game._id || game.id || ''; 
+            
             return (
               <div className="history-item" key={gameId}>
-                <Link to={`/history/game/${gameId}`} className="history-item-main">
+                <Link to={gameId ? `/history/game/${gameId}` : '#'} className="history-item-main">
                   <div className="game-info">
                     <div className="game-info-body">
                       <div className="game-title">{game.gameName}</div>
@@ -222,37 +192,22 @@ const HistoryDashboard = () => {
                       </div>
                       <div className="game-teams">
                         {(game.teams || []).map((team) => (
-                          <span
-                            key={team.teamId}
-                            className={`team-chip ${winner?.teamId === team.teamId ? 'winner' : ''}`}
-                          >
+                          <span key={team.teamId} className={`team-chip ${winner?.teamId === team.teamId ? 'winner' : ''}`}>
                             {team.name}: {team.totalScore}
                           </span>
                         ))}
                       </div>
                     </div>
                     <div className="game-date">
-                      {new Date(game.createdAt).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric'
-                      })}
+                      {new Date(game.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </div>
                   </div>
                 </Link>
                 <div className="history-item-actions">
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm history-play-btn"
-                    onClick={(e) => handlePlayAgain(e, game)}
-                    title="Play again with same teams"
-                  >
+                  <button type="button" className="btn btn-primary btn-sm history-play-btn" onClick={(e) => openPlayModal(e, game)}>
                     ▶ Play
                   </button>
-                  <Link
-                    to={`/history/game/${gameId}`}
-                    className="btn btn-secondary btn-sm history-view-btn"
-                  >
+                  <Link to={gameId ? `/history/game/${gameId}` : '#'} className="btn btn-secondary btn-sm history-view-btn">
                     View
                   </Link>
                 </div>
@@ -265,9 +220,24 @@ const HistoryDashboard = () => {
       {pagination.totalPages > 1 && (
         <div className="flex-center mt-3 gap-md history-pagination">
           <span className="text-muted history-pagination-text">
-            Page {pagination.currentPage} of {pagination.totalPages} · {pagination.totalCount}{' '}
-            games
+            Page {pagination.currentPage} of {pagination.totalPages} · {pagination.totalCount} games
           </span>
+        </div>
+      )}
+
+      {/* PLAY OPTIONS MODAL */}
+      {showPlayModal && selectedGameForPlay && (
+        <div className="modal-overlay" onClick={() => setShowPlayModal(false)}>
+          <div className="modal-content text-center" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>▶</div>
+            <h2>How do you want to play?</h2>
+            <p className="text-muted mb-3">You selected: <strong>{selectedGameForPlay.gameName}</strong></p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <button className="btn btn-primary btn-lg btn-block" onClick={handleRematch}>🔄 Rematch (Same Players)</button>
+              <button className="btn btn-secondary btn-lg btn-block" onClick={() => navigate('/play')}>🆕 Start Entirely New Game</button>
+              <button className="btn btn-ghost btn-block mt-2" onClick={() => setShowPlayModal(false)}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

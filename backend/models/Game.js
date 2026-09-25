@@ -15,7 +15,13 @@ const teamScoreSchema = new mongoose.Schema({
   wasImposter: { type: Boolean, default: false },
   wasIdentified: { type: Boolean, default: false },
   identifiedImposter: { type: Boolean, default: false },
-  votedFor: { type: String, default: '' }
+  votedFor: { type: String, default: '' },
+  // For multi-vote support — stores each vote's correctness
+  votes: [{
+    votedForId: { type: String },
+    votedForName: { type: String },
+    isCorrect: { type: Boolean }
+  }]
 }, { _id: false });
 
 const roundSchema = new mongoose.Schema({
@@ -30,6 +36,9 @@ const roundSchema = new mongoose.Schema({
   fooledByNames: [{ type: String }],
   correctCount: { type: Number, default: 0 },
   missCount: { type: Number, default: 0 },
+  // Track mode used for this specific round
+  votingMode: { type: String, enum: ['single', 'multi'], default: 'single' },
+  allowImposterVoting: { type: Boolean, default: false },
   completedAt: { type: Date, default: Date.now }
 }, { _id: false });
 
@@ -62,6 +71,23 @@ const gameSchema = new mongoose.Schema({
   },
   floorLimitEnabled: { type: Boolean, default: false },
   floorLimitValue: { type: Number, default: 0 },
+  // GAME-LEVEL SETTINGS (defaults are safe / backward compatible)
+  votingMode: {
+    type: String,
+    enum: ['single', 'multi'],
+    default: 'single'
+  },
+  allowImposterVoting: {
+    type: Boolean,
+    default: false
+  },
+  // NEW: How many votes each player MUST cast (only relevant in multi-vote mode)
+  requiredVotesPerPlayer: {
+    type: Number,
+    default: 1,
+    min: 1,
+    max: 50
+  },
   status: {
     type: String,
     enum: ['active', 'completed', 'paused'],

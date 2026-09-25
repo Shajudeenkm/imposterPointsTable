@@ -18,12 +18,10 @@ const Navbar = () => {
   const currentGameId = isInGame ? location.pathname.split('/')[2] : null;
   const isGuestGame = currentGameId === 'guest';
 
-  // Close mobile menu on route change
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
 
-  // Lock body scroll when menu open (mobile)
   useEffect(() => {
     if (menuOpen) {
       document.body.style.overflow = 'hidden';
@@ -142,11 +140,16 @@ const Navbar = () => {
           className="navbar-brand"
           onClick={(e) => handleNavClick(e, isGuest ? '/play' : '/')}
         >
-          <span className="logo-icon" aria-hidden="true">🎭</span>
+          <img
+            src="/Image/logo-icon.png"
+            alt="Imposter Game"
+            className="navbar-logo-img"
+            width={32}
+            height={32}
+          />
           <span className="brand-text">Imposter Game</span>
         </Link>
 
-        {/* Hamburger — visibility controlled ONLY by CSS (never inline display:none) */}
         <button
           type="button"
           className={`hamburger ${menuOpen ? 'open' : ''}`}
@@ -159,7 +162,6 @@ const Navbar = () => {
           <span />
         </button>
 
-        {/* Backdrop when mobile menu open */}
         {menuOpen && (
           <button
             type="button"
@@ -184,6 +186,9 @@ const Navbar = () => {
               <Link to="/favorites" className={isActive('/favorites')} onClick={(e) => handleNavClick(e, '/favorites')}>
                 Favorites
               </Link>
+              <Link to="/help" className={isActive('/help')} onClick={(e) => handleNavClick(e, '/help')}>
+                Help
+              </Link>
               <Link to="/profile" className={isActive('/profile')} onClick={(e) => handleNavClick(e, '/profile')}>
                 <span className="nav-avatar">{user?.username?.charAt(0)?.toUpperCase()}</span>
                 <span className="nav-username">{user?.username}</span>
@@ -196,6 +201,9 @@ const Navbar = () => {
             <>
               <Link to="/play" className={isActive('/play')} onClick={(e) => handleNavClick(e, '/play')}>
                 Guest Play
+              </Link>
+              <Link to="/help" className={isActive('/help')} onClick={(e) => handleNavClick(e, '/help')}>
+                Help
               </Link>
               <button
                 type="button"
@@ -213,6 +221,9 @@ const Navbar = () => {
             </>
           ) : (
             <>
+              <Link to="/help" className={isActive('/help')}>
+                Help
+              </Link>
               <button
                 type="button"
                 className="nav-link"

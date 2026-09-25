@@ -44,7 +44,6 @@ const LandingPage = () => {
 
   return (
     <div className="landing">
-      {/* Ambient background */}
       <div className="landing-bg" aria-hidden="true">
         <div className="landing-orb landing-orb-a" />
         <div className="landing-orb landing-orb-b" />
@@ -52,17 +51,19 @@ const LandingPage = () => {
         <div className="landing-grid" />
       </div>
 
-      {/* HERO */}
       <section className="landing-hero">
         <div className="landing-badge anim-fade-up">
           <span className="landing-badge-dot" />
           Free · Guest mode · Cloud save
         </div>
 
-        <div className="landing-masks anim-fade-up anim-delay-1" aria-hidden="true">
-          <span className="mask mask-happy">😊</span>
-          <span className="mask mask-drama">🎭</span>
-          <span className="mask mask-suspect">😈</span>
+        {/* NEW: Use your actual logo instead of emoji masks */}
+        <div className="landing-logo-hero anim-fade-up anim-delay-1">
+          <img
+            src="/Image/logo-full-dark.png"
+            alt="Imposter Game"
+            className="landing-hero-logo"
+          />
         </div>
 
         <h1 className="landing-title anim-fade-up anim-delay-2">
@@ -103,7 +104,6 @@ const LandingPage = () => {
         </p>
       </section>
 
-      {/* FEATURES */}
       <section className="landing-features">
         {FEATURES.map((f, i) => (
           <article
@@ -117,7 +117,6 @@ const LandingPage = () => {
         ))}
       </section>
 
-      {/* HOW IT WORKS */}
       <section className="landing-how">
         <h2 className="landing-section-title">How a round works</h2>
         <div className="landing-steps">
@@ -133,7 +132,6 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* BOTTOM CTA */}
       <section className="landing-bottom-cta">
         <div className="landing-bottom-card">
           <h2>Ready to expose the imposter?</h2>
