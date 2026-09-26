@@ -38,7 +38,7 @@ const GameSession = () => {
   const { gameId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { isGuest, endGuest } = useAuth();
+  const { user, isGuest, endGuest, openAuthModal } = useAuth();
 
   const isGuestSession = gameId === 'guest' || isGuest;
   const forceResumeMode = location.state?.resumeMode === true;
@@ -49,23 +49,37 @@ const GameSession = () => {
   const [selectedImposters, setSelectedImposters] = useState([]);
   const [imposterCount, setImposterCount] = useState(1);
   const [votes, setVotes] = useState({});
-  const [roundPhase, setRoundPhase] = useState('setup');
+  const [roundPhase, setRoundPhase] = useState('setup'); // 'setup' | 'voting' | 'result'
   const [lastRoundResult, setLastRoundResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Completed Game View State
+  const [completedView, setCompletedView] = useState('scoreboard'); // 'scoreboard' | 'rounds'
+
+  // Modals & Overlays
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showBackExitModal, setShowBackExitModal] = useState(false);
   const [backExitProcessing, setBackExitProcessing] = useState(false);
   const [showGuestSaveModal, setShowGuestSaveModal] = useState(false);
-
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [showScoreboardModal, setShowScoreboardModal] = useState(false);
 
+  // Temp Settings State
   const [tempFloorEnabled, setTempFloorEnabled] = useState(false);
   const [tempFloorValue, setTempFloorValue] = useState(0);
   const [tempVotingMode, setTempVotingMode] = useState('single');
   const [tempAllowImposterVoting, setTempAllowImposterVoting] = useState(false);
   const [tempRequiredVotes, setTempRequiredVotes] = useState(1);
+
+  // AUTO-REDIRECT AFTER GUEST LOGIN
+  useEffect(() => {
+    if (user && isGuestSession) {
+      // If user logs in while viewing a guest game, AuthContext processes upload in the background.
+      // We route them to history so they see their newly saved game!
+      navigate('/history');
+    }
+  }, [user, isGuestSession, navigate]);
 
   const loadGame = useCallback(async () => {
     try {
@@ -87,19 +101,20 @@ const GameSession = () => {
         return;
       }
       
-      // FIX: Guard against "undefined" ID navigation
       if (!gameId || gameId === 'undefined') {
         throw new Error('Invalid game ID');
       }
 
       const response = await gamesAPI.getById(gameId);
       let loadedGame = response.data.game;
+      
       if (loadedGame.status === 'completed' && forceResumeMode) {
         try {
           await gamesAPI.reactivate(gameId);
           loadedGame.status = 'active';
         } catch (e) { console.warn('Could not reactivate'); }
       }
+      
       setGame(loadedGame);
       setTempFloorEnabled(loadedGame.floorLimitEnabled || false);
       setTempFloorValue(loadedGame.floorLimitValue || 0);
@@ -228,7 +243,6 @@ const GameSession = () => {
         saveGuestGame(ended);
         setGame(ended);
         setShowEndConfirm(false);
-        setShowGuestSaveModal(true);
         triggerConfetti();
         return;
       }
@@ -250,7 +264,6 @@ const GameSession = () => {
         saveGuestGame(ended);
         setGame(ended);
         setShowBackExitModal(false);
-        setShowGuestSaveModal(true);
         triggerConfetti();
       } else {
         await gamesAPI.complete(gameId);
@@ -273,7 +286,6 @@ const GameSession = () => {
 
   if (loading) return <div className="loading-container"><div className="spinner"></div></div>;
 
-  // FIX: Provide a "Go Back" button if game fails to load
   if (!game) {
     return (
       <div style={{ padding: '24px', textAlign: 'center', marginTop: '3rem' }}>
@@ -288,32 +300,120 @@ const GameSession = () => {
     );
   }
 
-  if (game.status === 'completed' && !isGuestSession) {
+  // --- COMPLETED GAME SCREENS ---
+  if (game.status === 'completed') {
     return (
       <div>
-        <div className="page-header"><h1>🏆 Game Completed</h1><p>{game.gameName}</p></div>
-        <Scoreboard teams={game.teams} rounds={game.rounds} />
-        <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={() => navigate('/play')}>🎮 New Game</button>
-          <button className="btn btn-secondary" onClick={() => navigate('/history')}>📜 View History</button>
+        <div className="page-header">
+          <h1>🏆 Game Completed {isGuestSession && <span className="badge badge-guest ml-2">GUEST</span>}</h1>
+          <p>{game.gameName}</p>
+        </div>
+
+        {/* Desktop/Mobile Toggle for End Screen Views */}
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+          <button 
+            className={`btn ${completedView === 'scoreboard' ? 'btn-primary' : 'btn-secondary'} flex-1`} 
+            onClick={() => setCompletedView('scoreboard')}
+          >
+            📊 Scoreboard
+          </button>
+          <button 
+            className={`btn ${completedView === 'rounds' ? 'btn-primary' : 'btn-secondary'} flex-1`} 
+            onClick={() => setCompletedView('rounds')}
+          >
+            📝 Round Details
+          </button>
+        </div>
+
+        {completedView === 'scoreboard' ? (
+          <Scoreboard teams={game.teams} rounds={game.rounds} />
+        ) : (
+          <div className="round-history">
+            {game.rounds.map(r => (
+              <div key={r.roundNumber} className="card mb-3">
+                <div className="card-header">
+                  <h3 style={{ margin: 0 }}>Round {r.roundNumber}</h3>
+                </div>
+                
+                {/* Desktop Table View */}
+                <div className="scoreboard-table-wrap round-details-table">
+                  <table className="scoreboard-table">
+                    <thead><tr><th>Player</th><th>Role</th><th>Result</th><th>Round Score</th></tr></thead>
+                    <tbody>
+                      {r.scores.map((s) => (
+                        <tr key={s.teamId}>
+                          <td><strong>{s.teamName}</strong></td>
+                          <td>{s.wasImposter ? '🎭 Imposter' : '👤 Innocent'}</td>
+                          <td>
+                            {s.wasImposter
+                              ? (s.wasIdentified ? 'Caught!' : 'Escaped!')
+                              : (s.identifiedImposter ? 'Guessed right' : 'Fooled')}
+                          </td>
+                          <td className={s.roundScore > 0 ? 'text-success' : s.roundScore < 0 ? 'text-danger' : ''}>
+                            {s.roundScore > 0 ? '+' : ''}{s.roundScore}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile Card View */}
+                <div className="round-details-mobile" style={{ display: 'flex' }}>
+                  {r.scores.map((s) => (
+                    <div key={s.teamId} className="rd-card">
+                      <div className="rd-header">
+                        <strong>{s.teamName}</strong>
+                        <span className={s.roundScore > 0 ? 'text-success' : s.roundScore < 0 ? 'text-danger' : 'text-muted'}>
+                          {s.roundScore > 0 ? '+' : ''}{s.roundScore}
+                        </span>
+                      </div>
+                      <div className="rd-body">
+                        <span>{s.wasImposter ? '🎭 Imposter' : '👤 Innocent'}</span>
+                        <span className={`rd-result ${s.wasImposter ? (s.wasIdentified ? 'rd-caught' : 'rd-escaped') : (s.identifiedImposter ? 'rd-guessed' : 'rd-fooled')}`}>
+                          {s.wasImposter ? (s.wasIdentified ? 'Caught!' : 'Escaped!') : (s.identifiedImposter ? 'Guessed right' : 'Fooled')}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ALWAYS INLINE AT THE BOTTOM OF THE PAGE */}
+        <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          {isGuestSession ? (
+            <>
+              <button 
+                className="btn btn-primary btn-lg flex-1" 
+                onClick={() => {
+                  localStorage.setItem('imposter_pending_save', 'true');
+                  openAuthModal({ mode: 'login', reason: 'save-guest-game' });
+                }}
+              >
+                ☁️ Sign in & Save
+              </button>
+              <button 
+                className="btn btn-secondary btn-lg flex-1" 
+                onClick={() => { clearGuestGame(); endGuest(); navigate('/'); }}
+              >
+                🗑️ Discard & Leave
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-primary btn-lg flex-1" onClick={() => navigate('/play')}>🎮 New Game</button>
+              <button className="btn btn-secondary btn-lg flex-1" onClick={() => navigate('/history')}>📜 View History</button>
+            </>
+          )}
         </div>
       </div>
     );
   }
 
-  if (game.status === 'completed' && isGuestSession && !showGuestSaveModal) {
-    return (
-      <div>
-        <div className="page-header"><h1>🏆 Game Completed (Guest)</h1><p>{game.gameName}</p></div>
-        <Scoreboard teams={game.teams} rounds={game.rounds} />
-        <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={() => setShowGuestSaveModal(true)}>☁️ Save to Cloud</button>
-          <button className="btn btn-secondary" onClick={() => { clearGuestGame(); endGuest(); navigate('/'); }}>Discard & Leave</button>
-        </div>
-      </div>
-    );
-  }
-
+  // --- ACTIVE GAME VARIABLES ---
   const pCount = game.numberOfPlayers;
   const maxImposters = calcMaxImposters(pCount);
   const canUseAdvancedVoting = pCount >= 5;
@@ -324,6 +424,7 @@ const GameSession = () => {
   return (
     <div className="game-session-page relative">
 
+      {/* ONBOARDING TOOLTIP */}
       {showTooltip && (
         <div className="tooltip-overlay" onClick={dismissTooltip}>
           <div className="tooltip-box" onClick={e => e.stopPropagation()}>
@@ -336,12 +437,13 @@ const GameSession = () => {
         </div>
       )}
 
+      {/* PAGE HEADER */}
       <div className="page-header">
         <div className="flex-between">
           <div>
             <h1>
               🎮 {game.gameName}
-              {isGuestSession && <span className="badge badge-guest">GUEST</span>}
+              {isGuestSession && <span className="badge badge-guest ml-2">GUEST</span>}
             </h1>
             <p>
               {pCount} players · Round {(game.currentRound || 0) + 1}
@@ -360,6 +462,7 @@ const GameSession = () => {
         </div>
       </div>
 
+      {/* RULES CARD */}
       <div className="card mb-3" style={{ fontSize: '0.85rem' }}>
         <strong>📏 Scoring Rules ({pCount} players):</strong>
         <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
@@ -380,8 +483,11 @@ const GameSession = () => {
         )}
       </div>
 
+      {/* MAIN GAME LAYOUT */}
       <div className="game-layout">
         <div className="game-main">
+          
+          {/* PHASE 1: SETUP */}
           {roundPhase === 'setup' && (
             <>
               <RoleDesignation
@@ -395,15 +501,20 @@ const GameSession = () => {
                 imposterCount={imposterCount}
                 onCountChange={(n) => {setImposterCount(n); setSelectedImposters(p => p.slice(0,n)); vibrate();}}
               />
-              {/* FIX: Start button is now guaranteed visible on mobile */}
-              <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem', width: '100%' }}>
-                <button className="btn btn-primary btn-lg" style={{ width: '100%', padding: '1rem' }} onClick={() => {setVotes({}); setRoundPhase('voting');}} disabled={selectedImposters.length !== imposterCount}>
+              
+              {/* Inline Actions (Always at the end of the page) */}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '1.5rem', width: '100%', flexWrap: 'wrap' }}>
+                <button className="btn btn-secondary hide-on-desktop flex-1" onClick={() => setShowScoreboardModal(true)}>
+                  📊 Standings
+                </button>
+                <button className="btn btn-primary btn-lg flex-2" onClick={() => {setVotes({}); setRoundPhase('voting');}} disabled={selectedImposters.length !== imposterCount}>
                   Continue to Voting →
                 </button>
               </div>
             </>
           )}
 
+          {/* PHASE 2: VOTING */}
           {roundPhase === 'voting' && (
             <>
               <div className="alert alert-info">
@@ -419,21 +530,30 @@ const GameSession = () => {
                 allowImposterVoting={game.allowImposterVoting}
                 requiredVotesPerPlayer={game.requiredVotesPerPlayer || 1}
               />
-              {/* FIX: Voting actions are now guaranteed visible on mobile */}
-              <div style={{ display: 'flex', gap: '10px', marginTop: '1.5rem', width: '100%' }}>
-                <button className="btn btn-secondary" style={{ padding: '1rem', flex: 1 }} onClick={() => setRoundPhase('setup')}>← Back</button>
-                <button className="btn btn-success btn-lg" style={{ padding: '1rem', flex: 2 }} onClick={handleSubmitRound} disabled={submitting}>
+              
+              {/* Inline Actions (Always at the end of the page) */}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '1.5rem', width: '100%', flexWrap: 'wrap' }}>
+                <button className="btn btn-secondary" style={{ padding: '1rem', flex: 1 }} onClick={() => setRoundPhase('setup')}>
+                  ← Back
+                </button>
+                <button className="btn btn-secondary hide-on-desktop" style={{ padding: '1rem' }} onClick={() => setShowScoreboardModal(true)}>
+                  📊
+                </button>
+                <button className="btn btn-success btn-lg" style={{ padding: '1rem', flex: 3 }} onClick={handleSubmitRound} disabled={submitting}>
                   {submitting ? 'Calculating...' : '✅ Submit Round'}
                 </button>
               </div>
             </>
           )}
 
+          {/* PHASE 3: RESULT */}
           {roundPhase === 'result' && lastRoundResult && (
             <>
               <div className="card mb-3">
-                <div className="card-header"><h3>📊 Round {lastRoundResult.round.roundNumber} Details</h3></div>
-                <div className="scoreboard-table-wrap">
+                <div className="card-header"><h3 style={{ margin: 0 }}>📊 Round {lastRoundResult.round.roundNumber} Details</h3></div>
+                
+                {/* Desktop Table View */}
+                <div className="scoreboard-table-wrap round-details-table">
                   <table className="scoreboard-table">
                     <thead><tr><th>Player</th><th>Role</th><th>Result</th><th>Round Score</th></tr></thead>
                     <tbody>
@@ -454,9 +574,35 @@ const GameSession = () => {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Mobile Card View */}
+                <div className="round-details-mobile" style={{ display: 'flex' }}>
+                  {lastRoundResult.round.scores.map((s) => (
+                    <div key={s.teamId} className="rd-card">
+                      <div className="rd-header">
+                        <strong>{s.teamName}</strong>
+                        <span className={s.roundScore > 0 ? 'text-success' : s.roundScore < 0 ? 'text-danger' : 'text-muted'}>
+                          {s.roundScore > 0 ? '+' : ''}{s.roundScore}
+                        </span>
+                      </div>
+                      <div className="rd-body">
+                        <span>{s.wasImposter ? '🎭 Imposter' : '👤 Innocent'}</span>
+                        <span className={`rd-result ${s.wasImposter ? (s.wasIdentified ? 'rd-caught' : 'rd-escaped') : (s.identifiedImposter ? 'rd-guessed' : 'rd-fooled')}`}>
+                          {s.wasImposter ? (s.wasIdentified ? 'Caught!' : 'Escaped!') : (s.identifiedImposter ? 'Guessed right' : 'Fooled')}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
               </div>
-              <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                <button className="btn btn-primary btn-lg" onClick={() => { setSelectedImposters([]); setVotes({}); setRoundPhase('setup'); }}>
+              
+              {/* Inline Actions (Always at the end of the page) */}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '1.5rem', width: '100%', flexWrap: 'wrap' }}>
+                <button className="btn btn-secondary hide-on-desktop flex-1" onClick={() => setShowScoreboardModal(true)}>
+                  📊 Standings
+                </button>
+                <button className="btn btn-primary btn-lg flex-2" onClick={() => { setSelectedImposters([]); setVotes({}); setRoundPhase('setup'); }}>
                   Next Round →
                 </button>
               </div>
@@ -464,10 +610,28 @@ const GameSession = () => {
           )}
         </div>
 
+        {/* Desktop Scoreboard Sidebar (Hidden on Mobile) */}
         <div className="game-sidebar">
           <Scoreboard teams={game.teams} />
         </div>
       </div>
+
+      {/* MOBILE SCOREBOARD BOTTOM SHEET MODAL */}
+      {showScoreboardModal && (
+        <div className="modal-overlay bottom-sheet-overlay" onClick={() => setShowScoreboardModal(false)}>
+          <div className="bottom-sheet-content" onClick={e => e.stopPropagation()}>
+            <div className="flex-between" style={{ marginBottom: '1rem', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border)'}}>
+              <h2 style={{ fontSize: '1.2rem', margin: 0 }}>📊 Current Standings</h2>
+              <button className="btn btn-sm btn-ghost" onClick={() => setShowScoreboardModal(false)} style={{ padding: '4px' }}>
+                <X size={24}/>
+              </button>
+            </div>
+            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              <Scoreboard teams={game.teams} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MID-GAME SETTINGS MODAL */}
       {showSettingsPanel && (
@@ -552,7 +716,7 @@ const GameSession = () => {
                   type="number"
                   className="form-control"
                   value={tempFloorValue}
-                  onChange={(e) => setFloorLimitValue(parseInt(e.target.value, 10) || 0)}
+                  onChange={(e) => setTempFloorValue(parseInt(e.target.value, 10) || 0)}
                   style={{ maxWidth: '150px' }}
                 />
               </div>
@@ -619,43 +783,6 @@ const GameSession = () => {
         </div>
       )}
 
-      {/* GUEST SAVE MODAL */}
-      {showGuestSaveModal && (
-        <div className="modal-overlay" onClick={() => setShowGuestSaveModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>☁️</div>
-              <h2>Save Your Game?</h2>
-              <p className="text-muted" style={{ marginBottom: '1rem' }}>
-                Sign in or create a free account to save this game to your history, add favorites, and access it from any device.
-              </p>
-            </div>
-            <div className="modal-actions" style={{ flexDirection: 'column', gap: '0.5rem' }}>
-              <button
-                className="btn btn-primary btn-block"
-                onClick={() => {
-                  localStorage.setItem('imposter_pending_save', 'true');
-                  setShowGuestSaveModal(false);
-                  navigate('/');
-                }}
-              >
-                ☁️ Sign in & Save
-              </button>
-              <button
-                className="btn btn-secondary btn-block"
-                onClick={() => {
-                  clearGuestGame();
-                  endGuest();
-                  setShowGuestSaveModal(false);
-                  navigate('/');
-                }}
-              >
-                🗑️ Discard Game
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
